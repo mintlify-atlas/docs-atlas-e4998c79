@@ -1,0 +1,70 @@
+---
+title: "IssueFilterSelection — dashboard filter model"
+sidebarTitle: "Models"
+description: "API reference for IssueFilterSelection, the frozen dataclass that represents a user's week and production line selection in the SteelWorks dashboard."
+---
+
+`IssueFilterSelection` is a frozen dataclass defined in `app/models.py` that carries the dashboard filter state — a selected calendar week and a list of production line IDs — through the service and repository layers. It is the single argument that `OperationsMetricsService` uses to scope every analytics query.
+
+## Class definition
+
+```python
+from __future__ import annotations
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class IssueFilterSelection:
+    """Filter scope used by operations analytics queries."""
+    calendar_week_id: int
+    production_line_ids: list[int]
+```
+
+---
+
+## Fields
+
+<ParamField path="calendar_week_id" type="int" required>
+  The numeric ID of the selected calendar week. Corresponds to `calendar_weeks.calendar_week_id` in the database and to the `calendar_week_id` key returned by `OperationsMetricsService.get_available_weeks()`.
+</ParamField>
+
+<ParamField path="production_line_ids" type="list[int]" required>
+  List of selected production line IDs. Corresponds to `production_lines.production_line_id` in the database. Can be empty — an empty list causes all service queries (`get_issue_summary`, `get_affected_lots`, and both CSV exports) to short-circuit and return `[]` without touching the repository.
+</ParamField>
+
+---
+
+## Immutability
+
+`frozen=True` means `IssueFilterSelection` is **hashable** and its fields **cannot be reassigned** after construction. Attempting to mutate a field raises a `FrozenInstanceError`:
+
+```python
+selection = IssueFilterSelection(calendar_week_id=1, production_line_ids=[1, 3])
+selection.calendar_week_id = 2  # raises dataclasses.FrozenInstanceError
+```
+
+Because the instance is hashable, it can safely be used as a dictionary key or stored in a set.
+
+---
+
+## Usage example
+
+```python
+from app.models import IssueFilterSelection
+from app.service import OperationsMetricsService
+
+selection = IssueFilterSelection(
+    calendar_week_id=1,
+    production_line_ids=[1, 3]
+)
+# selection.calendar_week_id == 1
+# selection.production_line_ids == [1, 3]
+
+service = OperationsMetricsService()
+summary = service.get_issue_summary(selection=selection, group_by_line=False)
+```
+
+<Note>
+  Line IDs are normalized (sorted and deduplicated) inside `OperationsMetricsService.normalize_line_ids()` before being passed to the repository. You do not need to pre-sort the list when constructing an `IssueFilterSelection`.
+</Note>
+
+For full details on how `IssueFilterSelection` is consumed, see [OperationsMetricsService](/api/operations-metrics-service).

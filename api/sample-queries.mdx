@@ -1,0 +1,396 @@
+---
+title: "Sample SQL queries for SteelWorks reporting"
+sidebarTitle: "Sample Queries"
+description: "Ready-to-run SQL queries from db/sample_queries.sql for production summaries, issue rankings, shipment analysis, and AC-driven metrics using the issue_occurrences view."
+---
+
+`db/sample_queries.sql` contains 15 production-ready queries for ad-hoc reporting against the SteelWorks PostgreSQL database. All queries assume `db/schema.sql` and `db/seed.sql` have been applied. They can be run directly in `psql`, piped through any SQL client, or adapted into application code. Queries 12–15 are parameterized with `:week_id` and `:line_ids` bind variables that map directly to the filters exposed in the SteelWorks Streamlit dashboard.
+
+---
+
+## Production analytics
+
+### Query 1 — Weekly production summary by line
+
+Returns planned units, actual units, and total downtime minutes grouped by calendar week and production line. Use this as the top-level throughput report.
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  SUM(pr.units_planned) AS units_planned,
+  SUM(pr.units_actual) AS units_actual,
+  SUM(pr.downtime_minutes) AS downtime_minutes
+FROM production_runs pr
+JOIN production_lines pl ON pl.production_line_id = pr.production_line_id
+LEFT JOIN calendar_weeks cw ON cw.calendar_week_id = pr.calendar_week_id
+GROUP BY cw.week_label, pl.line_name
+ORDER BY cw.week_label, pl.line_name;
+```
+
+---
+
+### Query 6 — Average downtime by line and shift
+
+Aggregates average downtime (rounded to two decimal places) and total run count per line/shift combination. Useful for spotting shift-specific equipment or staffing patterns.
+
+```sql
+SELECT
+  pl.line_name,
+  sh.shift_name,
+  AVG(pr.downtime_minutes)::numeric(10,2) AS avg_downtime_minutes,
+  COUNT(*) AS run_count
+FROM production_runs pr
+JOIN production_lines pl ON pl.production_line_id = pr.production_line_id
+JOIN shifts sh ON sh.shift_id = pr.shift_id
+GROUP BY pl.line_name, sh.shift_name
+ORDER BY pl.line_name, sh.shift_name;
+```
+
+---
+
+### Query 7 — Daily production variance
+
+Shows the daily gap between planned and actual units (planned − actual) summed across all lines and shifts. Positive values indicate under-production; negative values indicate over-production.
+
+```sql
+SELECT
+  pr.run_date,
+  SUM(pr.units_planned - pr.units_actual) AS total_variance
+FROM production_runs pr
+GROUP BY pr.run_date
+ORDER BY pr.run_date;
+```
+
+---
+
+## Issue analysis
+
+### Query 2 — Top issue types in the last 30 days
+
+Ranks issue types by occurrence count over the trailing 30-day window, calculated relative to the maximum `run_date` present in the table (not the wall-clock date). This makes the result reproducible against any snapshot of the database.
+
+```sql
+WITH bounds AS (
+  SELECT (MAX(run_date) - INTERVAL '30 days')::date AS start_date
+  FROM production_runs
+)
+SELECT
+  it.issue_type_name,
+  COUNT(*) AS issue_count
+FROM production_issues pi
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN bounds b ON pr.run_date >= b.start_date
+GROUP BY it.issue_type_name
+ORDER BY issue_count DESC, it.issue_type_name;
+```
+
+---
+
+### Query 3 — Lots with a production issue and shipments on hold or backordered
+
+Cross-references the production issue log with the shipments table to surface lot codes that are both flagged for quality problems and have downstream shipping risk. Returns one row per `(issue, shipment)` pair so a single lot can appear multiple times if it has multiple affected shipments.
+
+```sql
+SELECT
+  l.lot_code,
+  p.part_number,
+  it.issue_type_name,
+  s.ship_date,
+  s.ship_status,
+  s.hold_reason
+FROM production_issues pi
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN lots l ON l.lot_id = pr.lot_id
+JOIN parts p ON p.part_id = l.part_id
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN shipments s ON s.lot_id = l.lot_id
+WHERE s.ship_status IN ('on_hold', 'backordered')
+ORDER BY s.ship_date DESC, l.lot_code;
+```
+
+---
+
+## Shipping reports
+
+### Query 4 — Shipped quantity by customer and week
+
+Summarizes shipped unit quantities per customer per week. Only rows in `shipped` or `partial` status are included; `on_hold` and `backordered` rows are excluded.
+
+```sql
+SELECT
+  cw.week_label,
+  c.customer_name,
+  SUM(s.qty_shipped) AS qty_shipped
+FROM shipments s
+JOIN sales_orders so ON so.sales_order_id = s.sales_order_id
+JOIN customers c ON c.customer_id = so.customer_id
+LEFT JOIN calendar_weeks cw ON cw.calendar_week_id = s.calendar_week_id
+WHERE s.ship_status IN ('shipped', 'partial')
+GROUP BY cw.week_label, c.customer_name
+ORDER BY cw.week_label, qty_shipped DESC;
+```
+
+---
+
+### Query 5 — Shipments currently on hold
+
+Returns every shipment in `on_hold` status with customer name, carrier, destination state, hold reason, and free-text shipping notes. Ordered most-recent first.
+
+```sql
+SELECT
+  s.ship_date,
+  so.sales_order_number,
+  c.customer_name,
+  l.lot_code,
+  s.destination_state,
+  ca.carrier_name,
+  s.hold_reason,
+  s.shipping_notes
+FROM shipments s
+JOIN sales_orders so ON so.sales_order_id = s.sales_order_id
+JOIN customers c ON c.customer_id = so.customer_id
+JOIN lots l ON l.lot_id = s.lot_id
+LEFT JOIN carriers ca ON ca.carrier_id = s.carrier_id
+WHERE s.ship_status = 'on_hold'
+ORDER BY s.ship_date DESC, c.customer_name;
+```
+
+---
+
+### Query 8 — Shipments for a specific sales order
+
+Drills into every shipment event for a single sales order number. Edit the `sales_order_number` literal to target the order you need.
+
+```sql
+SELECT
+  s.ship_date,
+  l.lot_code,
+  s.qty_shipped,
+  s.ship_status,
+  s.tracking_or_pro,
+  s.bol_number,
+  s.hold_reason,
+  s.shipping_notes
+FROM shipments s
+JOIN sales_orders so ON so.sales_order_id = s.sales_order_id
+JOIN lots l ON l.lot_id = s.lot_id
+WHERE so.sales_order_number = 'SO-58689'
+ORDER BY s.ship_date, s.shipment_id;
+```
+
+---
+
+### Query 9 — Lead time from first production run to first ship date per lot
+
+Calculates the end-to-end lead time in days for every lot that has both a production run and at least one shipment. Uses two CTEs to compute `MIN(run_date)` and `MIN(ship_date)` independently, then joins them on `lot_id`. Results are ordered by longest lead time first.
+
+```sql
+WITH prod AS (
+  SELECT lot_id, MIN(run_date) AS first_run_date
+  FROM production_runs
+  GROUP BY lot_id
+), ship AS (
+  SELECT lot_id, MIN(ship_date) AS first_ship_date
+  FROM shipments
+  GROUP BY lot_id
+)
+SELECT
+  l.lot_code,
+  p.part_number,
+  prod.first_run_date,
+  ship.first_ship_date,
+  (ship.first_ship_date - prod.first_run_date) AS lead_time_days
+FROM prod
+JOIN ship ON ship.lot_id = prod.lot_id
+JOIN lots l ON l.lot_id = prod.lot_id
+JOIN parts p ON p.part_id = l.part_id
+ORDER BY lead_time_days DESC, l.lot_code;
+```
+
+---
+
+### Query 10 — Lots with multiple partial shipments
+
+Identifies lots that were split across two or more `partial` shipments, which may indicate insufficient stock, carrier capacity limits, or fulfillment issues. Only lots with `COUNT(*) >= 2` partial rows are returned.
+
+```sql
+SELECT
+  l.lot_code,
+  so.sales_order_number,
+  COUNT(*) AS partial_shipments,
+  SUM(s.qty_shipped) AS total_qty_shipped
+FROM shipments s
+JOIN lots l ON l.lot_id = s.lot_id
+JOIN sales_orders so ON so.sales_order_id = s.sales_order_id
+WHERE s.ship_status = 'partial'
+GROUP BY l.lot_code, so.sales_order_number
+HAVING COUNT(*) >= 2
+ORDER BY partial_shipments DESC, l.lot_code;
+```
+
+---
+
+## AC-driven queries (using the `issue_occurrences` view)
+
+These queries implement the acceptance-criteria (AC) scenarios for the Operations Analyst user story. They all target the `issue_occurrences` view, which is the authoritative join of `production_issues`, `production_runs`, and `issue_types`.
+
+<Tip>
+  Queries 12–15 use the `issue_occurrences` view defined in `db/schema.sql`. This view pre-joins `production_issues`, `production_runs`, and `issue_types` so reporting queries only need to filter and aggregate. See [issue_occurrences view](/data-model/issue-occurrences-view) for the full view definition and column reference.
+</Tip>
+
+---
+
+### Query 11 — Available filter values (weeks and lines)
+
+Returns all calendar weeks and all active production lines in a single round trip. These two result sets populate the **Week** and **Production Line** filter controls in the dashboard (AC1/AC2/AC3).
+
+```sql
+SELECT calendar_week_id, week_label, start_date, end_date
+FROM calendar_weeks
+ORDER BY start_date;
+
+SELECT production_line_id, line_name
+FROM production_lines
+WHERE is_active = TRUE
+ORDER BY line_name;
+```
+
+---
+
+### Query 12 — Issue totals for a selected week and lines, grouped by line
+
+Returns issue counts per `(line_name, issue_type_name)` pair for the chosen filter values. This is the authoritative source that powers the issue-summary table in the dashboard (AC4/AC5).
+
+<Note>
+  `:week_id` and `:line_ids` are psql bind variables. Set them before running the query:
+
+  ```sql
+  \set week_id 1
+  \set line_ids '{1,2}'
+  ```
+
+  In `psql`, reference them as `:week_id` and `:'line_ids'` (with quotes for the array literal). The `ANY(:line_ids::bigint[])` cast converts the `'{1,2}'` text literal into a PostgreSQL `bigint[]` array inline.
+</Note>
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  io.issue_type_name,
+  COUNT(*) AS issue_count
+FROM issue_occurrences io
+JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+WHERE io.calendar_week_id = :week_id
+  AND io.production_line_id = ANY(:line_ids::bigint[])
+GROUP BY cw.week_label, pl.line_name, io.issue_type_name
+ORDER BY pl.line_name, issue_count DESC, io.issue_type_name;
+```
+
+---
+
+### Query 13 — Affected lots for a selected week and lines
+
+Lists every lot that recorded at least one issue within the filter scope, with a deduplicated, alphabetically sorted comma-separated string of its issue types (AC6/AC7).
+
+<Note>
+  Set `:week_id` and `:line_ids` as shown above in [Query 12](#query-12--issue-totals-for-a-selected-week-and-lines-grouped-by-line) before running this query.
+</Note>
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  l.lot_code,
+  COUNT(*) AS issue_count,
+  STRING_AGG(DISTINCT io.issue_type_name, ', ' ORDER BY io.issue_type_name) AS issue_types
+FROM issue_occurrences io
+JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+JOIN lots l ON l.lot_id = io.lot_id
+WHERE io.calendar_week_id = :week_id
+  AND io.production_line_id = ANY(:line_ids::bigint[])
+GROUP BY cw.week_label, pl.line_name, l.lot_code
+ORDER BY issue_count DESC, l.lot_code;
+```
+
+---
+
+### Query 14 — Proof that grouped totals match ungrouped source data
+
+A reconciliation query that proves the grouped `SUM(issue_count)` equals the raw `COUNT(*)` from `issue_occurrences`. Use this during QA or after a data load to verify that no rows were double-counted or dropped by the grouping logic (AC9).
+
+<Note>
+  Set `:week_id` and `:line_ids` as shown above in [Query 12](#query-12--issue-totals-for-a-selected-week-and-lines-grouped-by-line) before running this query.
+</Note>
+
+```sql
+WITH raw AS (
+  SELECT COUNT(*) AS raw_issue_rows
+  FROM issue_occurrences io
+  WHERE io.calendar_week_id = :week_id
+    AND io.production_line_id = ANY(:line_ids::bigint[])
+), grouped AS (
+  SELECT SUM(issue_count) AS grouped_issue_rows
+  FROM (
+    SELECT COUNT(*) AS issue_count
+    FROM issue_occurrences io
+    WHERE io.calendar_week_id = :week_id
+      AND io.production_line_id = ANY(:line_ids::bigint[])
+    GROUP BY io.issue_type_id
+  ) x
+)
+SELECT
+  raw.raw_issue_rows,
+  grouped.grouped_issue_rows,
+  (raw.raw_issue_rows = grouped.grouped_issue_rows) AS totals_match
+FROM raw, grouped;
+```
+
+The `totals_match` column returns `true` when the data is consistent. A `false` value indicates an aggregation bug or a data integrity problem that needs investigation.
+
+---
+
+### Query 15 — Export-friendly flat shape for `issue_summary.csv`
+
+Produces the same data as Query 12 but ordered for CSV export: sorted by `week_label`, `line_name`, then `issue_type_name` so the file is deterministic and diff-friendly (AC10/AC11).
+
+<Note>
+  Set `:week_id` and `:line_ids` as shown above in [Query 12](#query-12--issue-totals-for-a-selected-week-and-lines-grouped-by-line) before running this query.
+</Note>
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  io.issue_type_name,
+  COUNT(*) AS issue_count
+FROM issue_occurrences io
+JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+WHERE io.calendar_week_id = :week_id
+  AND io.production_line_id = ANY(:line_ids::bigint[])
+GROUP BY cw.week_label, pl.line_name, io.issue_type_name
+ORDER BY cw.week_label, pl.line_name, io.issue_type_name;
+```
+
+To export directly from `psql`, wrap the query in a `\copy` command:
+
+```sql
+\copy (
+  SELECT
+    cw.week_label,
+    pl.line_name,
+    io.issue_type_name,
+    COUNT(*) AS issue_count
+  FROM issue_occurrences io
+  JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+  JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+  WHERE io.calendar_week_id = :week_id
+    AND io.production_line_id = ANY(:line_ids::bigint[])
+  GROUP BY cw.week_label, pl.line_name, io.issue_type_name
+  ORDER BY cw.week_label, pl.line_name, io.issue_type_name
+) TO 'issue_summary.csv' CSV HEADER
+```

@@ -1,0 +1,102 @@
+---
+title: "SteelWorks PostgreSQL schema — tables and relationships"
+sidebarTitle: "Schema"
+description: "Overview of the SteelWorks PostgreSQL schema: 11 tables, 1 reporting view, foreign key relationships, check constraints, and the indexes that power dashboard queries."
+---
+
+The SteelWorks PostgreSQL schema models a manufacturing **production and shipping log** that drives the operations dashboard. It is divided into nine dimension (reference) tables that hold stable lookup data and three fact (transaction) tables that accumulate run-by-run production and shipping events. A single reporting view — `issue_occurrences` — joins the issue, run, and type tables into the authoritative source for all issue metrics.
+
+## Initialize the schema
+
+Apply the DDL and seed data against any PostgreSQL database by running the two scripts in order:
+
+```bash
+psql $DATABASE_URL -f db/schema.sql
+psql $DATABASE_URL -f db/seed.sql
+```
+
+<Warning>
+  `schema.sql` opens with `DROP … IF EXISTS` statements that remove every table and the `issue_occurrences` view before recreating them. This is intentional for development reruns but is **destructive in production** — all existing data will be lost. Never run `schema.sql` against a live production database without a backup.
+</Warning>
+
+## Tables overview
+
+The schema contains **11 tables** split across two categories:
+
+| Table | Category | Purpose |
+|---|---|---|
+| `production_lines` | Dimension | Active/inactive production lines |
+| `shifts` | Dimension | Shift definitions (day, night, swing) |
+| `calendar_weeks` | Dimension | ISO week periods with date ranges |
+| `parts` | Dimension | Part numbers and descriptions |
+| `lots` | Dimension | Production lot codes tied to a part |
+| `issue_types` | Dimension | Enum-like lookup for issue classifications |
+| `customers` | Dimension | Customer organizations |
+| `carriers` | Dimension | Shipping carriers |
+| `sales_orders` | Dimension | Sales order numbers linked to customers |
+| `production_runs` | Fact | One row per production run (date + shift + line + lot) |
+| `production_issues` | Fact | One issue record per production run (at most one) |
+| `shipments` | Fact | Shipping records for lots against sales orders |
+
+## Relationships summary
+
+The following relationships are defined via foreign key constraints. Every foreign key uses `ON DELETE RESTRICT` unless otherwise noted.
+
+- **ProductionLine** 1 ── \* **ProductionRun** — each run is associated with exactly one line
+- **Shift** 1 ── \* **ProductionRun** — each run belongs to exactly one shift
+- **CalendarWeek** 1 ── \* **ProductionRun** — each run is filed under one ISO calendar week
+- **Part** 1 ── \* **Lot** — each lot traces back to a single part number
+- **Lot** 1 ── \* **ProductionRun** — each run consumes one lot
+- **ProductionRun** 0..1 ── 1 **ProductionIssue** — a run may have at most one primary issue; the foreign key uses `ON DELETE CASCADE` so deleting a run also removes its issue record
+- **IssueType** 1 ── \* **ProductionIssue** — every recorded issue is classified by one issue type
+- **Lot** 1 ── \* **Shipment** — a lot can appear across multiple shipment records
+- **CalendarWeek** 1 ── \* **Shipment** — each shipment is filed under one ISO calendar week
+- **Customer** 1 ── \* **SalesOrder** — each sales order belongs to one customer
+- **SalesOrder** 1 ── \* **Shipment** — a sales order can be fulfilled by multiple shipment records
+- **Carrier** 1 ── \* **Shipment** — a shipment may optionally reference one carrier (`carrier_id` is nullable)
+
+## Indexes
+
+The following indexes are created to support common reporting and drill-down queries used by the dashboard:
+
+| Index | Table | Columns | Notes |
+|---|---|---|---|
+| `idx_lots_part_id` | `lots` | `part_id` | Speeds lot lookups by part |
+| `idx_production_runs_run_date` | `production_runs` | `run_date` | Date-range filtering on production runs |
+| `idx_production_runs_line_date` | `production_runs` | `(production_line_id, run_date)` | Composite index for per-line date queries |
+| `idx_production_runs_lot_id` | `production_runs` | `lot_id` | Lot drill-down from runs |
+| `idx_production_runs_week_id` | `production_runs` | `calendar_week_id` | Weekly aggregation queries |
+| `idx_shipments_ship_date` | `shipments` | `ship_date` | Date-range filtering on shipments |
+| `idx_shipments_status` | `shipments` | `ship_status` | Filter by status (on_hold, partial, etc.) |
+| `idx_shipments_lot_id` | `shipments` | `lot_id` | Lot-to-shipment join path |
+| `idx_shipments_sales_order_id` | `shipments` | `sales_order_id` | Sales order drill-down |
+| `idx_shipments_destination_state_date` | `shipments` | `(destination_state, ship_date)` | State + date composite reporting |
+| `idx_shipments_on_hold` | `shipments` | `ship_date` WHERE `ship_status = 'on_hold'` | Partial index — powers "on hold" dashboard panels |
+| `idx_sales_orders_customer_id` | `sales_orders` | `customer_id` | Customer-to-order join path |
+
+## Idempotent seeding
+
+`db/seed.sql` uses `ON CONFLICT … DO NOTHING` (and `DO UPDATE` for updatable lookups) on every insert, making the script **safe to rerun** without duplicating data. It inserts a small but representative dataset that exercises all Acceptance Criteria:
+
+- **2 calendar weeks** — `2026-W03` (2026-01-12 → 2026-01-18) and `2026-W04` (2026-01-19 → 2026-01-25)
+- **3 production lines** — Line 1, Line 2, Line 4
+- **5 lots** — LOT-1001, LOT-1002, LOT-2001, LOT-2002, LOT-3001
+- **6 issue types** — `material_shortage`, `changeover_delay`, `tool_wear`, `sensor_fault`, `quality_hold`, `operator_training`
+- **8 production runs** across both weeks with issues attached to 6 of them
+- **4 shipments** covering `partial`, `shipped`, `on_hold`, and `backordered` statuses
+
+---
+
+## Explore further
+
+<CardGroup cols={2}>
+  <Card title="Reference Tables" icon="table" href="/data-model/reference-tables">
+    Column-level documentation for all nine dimension tables.
+  </Card>
+  <Card title="Fact Tables" icon="database" href="/data-model/fact-tables">
+    Column-level documentation for production_runs, production_issues, and shipments, plus sample queries.
+  </Card>
+  <Card title="issue_occurrences View" icon="eye" href="/data-model/issue-occurrences-view">
+    The authoritative reporting view for all issue metrics and exports.
+  </Card>
+</CardGroup>

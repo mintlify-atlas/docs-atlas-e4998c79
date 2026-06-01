@@ -1,0 +1,96 @@
+---
+title: "Deploy SteelWorks on Render with Docker"
+sidebarTitle: "Render"
+description: "Step-by-step guide to deploying SteelWorks as a Docker web service on Render, connecting a managed PostgreSQL database, and setting required environment variables."
+---
+
+Render is the recommended hosting platform for SteelWorks, supporting Docker-based deployments and managed PostgreSQL out of the box. The SteelWorks CI pipeline triggers a Render deploy hook automatically whenever a push to `main` passes all tests.
+
+## Deploy the web service
+
+<Steps>
+  <Step title="Push your code to GitHub">
+    Ensure your latest changes are committed and pushed to the `main` branch of your GitHub repository. The Render deployment pulls from this branch.
+
+    ```bash
+    git push origin main
+    ```
+  </Step>
+  <Step title="Create a new Web Service on Render">
+    Log in to the [Render dashboard](https://render.com) and click **New → Web Service**.
+  </Step>
+  <Step title="Connect your GitHub repository">
+    Select your GitHub account, then choose the SteelWorks repository. Set the branch to `main`.
+  </Step>
+  <Step title="Set Language to Docker">
+    Under the **Language** selector, choose **Docker**. Render will detect the `Dockerfile` at the repository root and use it to build and run the service.
+  </Step>
+  <Step title="Add environment variables">
+    Scroll to the **Environment Variables** section and add the following:
+
+    | Key | Value |
+    |-----|-------|
+    | `DATABASE_URL` | Your Render managed PostgreSQL connection string (see [Managed PostgreSQL](#managed-postgresql) below) |
+    | `SENTRY_DSN` | Your Sentry DSN — optional, omit entirely if not using Sentry |
+  </Step>
+  <Step title="Deploy the service">
+    Click **Deploy Web Service**. Render will build the Docker image, push it to its internal registry, and start the container.
+  </Step>
+  <Step title="Open your app">
+    Once the deploy completes and the service status shows **Live**, open your service URL in a browser:
+
+    ```
+    https://<your-service>.onrender.com/
+    ```
+  </Step>
+</Steps>
+
+## Managed PostgreSQL
+
+SteelWorks requires a PostgreSQL database. Render provides a managed PostgreSQL service that integrates cleanly with web services:
+
+1. In the Render dashboard click **New → PostgreSQL**.
+2. Choose a name, region, and plan, then click **Create Database**.
+3. Once the database is provisioned, open its detail page and copy the **Internal Database URL** (use the internal URL for services in the same Render region to avoid egress fees).
+4. Paste that URL as the value of the `DATABASE_URL` environment variable on your web service.
+
+The connection string format used by SteelWorks is:
+
+```
+postgresql+pg8000://<user>:<password>@<host>/<dbname>
+```
+
+<Warning>
+  Keep `SENTRY_DSN` unquoted when entering it in the Render dashboard. Wrapping the value in quotation marks will cause the Sentry SDK initialization to fail because the quotes become part of the DSN string.
+</Warning>
+
+<Note>
+  The Docker image listens on Render's `PORT` environment variable. Render sets `PORT` automatically for every web service; the Dockerfile reads it via `${PORT}` in the `CMD` instruction, so no manual port configuration is required.
+</Note>
+
+## Post-deploy checklist
+
+After the service is live, run through the following steps to confirm everything is working correctly:
+
+<Steps>
+  <Step title="Verify the app is accessible">
+    Open `https://<your-service>.onrender.com/` and confirm the Operations Issue Metrics dashboard loads without errors.
+  </Step>
+  <Step title="Initialize the database">
+    Apply the schema and seed data against your production database. From a local terminal with `DATABASE_URL` set to your Render connection string:
+
+    ```bash
+    psql "$DATABASE_URL" -f db/schema.sql
+    psql "$DATABASE_URL" -f db/seed.sql
+    ```
+  </Step>
+  <Step title="Test the health endpoint">
+    Confirm the Streamlit server is responding to health checks:
+
+    ```bash
+    curl https://<your-service>.onrender.com/_stcore/health
+    ```
+
+    A healthy server returns HTTP 200.
+  </Step>
+</Steps>

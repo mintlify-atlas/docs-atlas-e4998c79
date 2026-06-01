@@ -1,0 +1,97 @@
+---
+title: "Issue summary table — counts by type and line"
+sidebarTitle: "Issue Summary"
+description: "The SteelWorks issue summary table shows issue counts per type for the selected week and lines, with an optional per-line breakdown and total issue count."
+---
+
+The Issue Summary table aggregates production issues by type for the selected week and line scope, giving operations teams a fast read on which problem categories — tool wear, material shortages, sensor faults, and so on — are driving the most impact in a given week. A total issue count below the table provides an at-a-glance health signal before drilling into individual lots.
+
+## What it shows
+
+The columns rendered depend on whether the **Group summary by line** checkbox is checked.
+
+**Ungrouped** (checkbox unchecked):
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label for the selected week (e.g. `2026-W03`) |
+| `issue_type_name` | Name of the issue category |
+| `issue_count` | Number of issues of that type across all selected lines |
+
+**Grouped by line** (checkbox checked, the default):
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label for the selected week |
+| `line_name` | Name of the production line |
+| `issue_type_name` | Name of the issue category |
+| `issue_count` | Number of issues of that type on that specific line |
+
+## Group by line toggle
+
+The `group_by_line` value from `st.checkbox("Group summary by line", value=True)` is passed directly to the service:
+
+```python
+issue_summary = service.get_issue_summary(
+    selection=selection,
+    group_by_line=group_by_line,
+)
+```
+
+When `group_by_line=True` the underlying SQL query groups by `(week_label, line_name, issue_type_name)` and orders by `line_name, issue_type_name`. When `False`, it groups by `(week_label, issue_type_name)` and orders by `issue_type_name` alone.
+
+## Total issues
+
+After the table, the app sums the `issue_count` values across all returned rows and writes the total beneath the table:
+
+```python
+summary_total = sum(int(row["issue_count"]) for row in issue_summary)
+st.write(f"Issue summary rows: {len(issue_summary)}")
+st.write(f"Total issues: {summary_total}")
+```
+
+This total reflects only the current filter scope — it changes whenever the week or line selection changes.
+
+## Example output — ungrouped
+
+```
+week_label    | issue_type_name    | issue_count
+2026-W03      | material_shortage  | 1
+2026-W03      | tool_wear          | 1
+```
+
+## Example output — grouped by line
+
+```
+week_label | line_name | issue_type_name   | issue_count
+2026-W03   | Line 1    | material_shortage | 1
+2026-W03   | Line 1    | tool_wear         | 1
+2026-W03   | Line 4    | sensor_fault      | 1
+```
+
+## Issue types in seed data
+
+The following issue type names appear in the default seed dataset:
+
+| Issue type name | Description |
+|---|---|
+| `tool_wear` | Tooling has degraded past acceptable tolerances |
+| `material_shortage` | Insufficient raw material to complete the run |
+| `sensor_fault` | Sensor malfunction during production |
+| `changeover_delay` | Line changeover took longer than the scheduled window |
+| `operator_training` | Issue attributed to operator skill gap |
+| `quality_hold` | Lot held pending quality inspection outcome |
+
+<Tip>
+  Use the **Group summary by line** toggle to compare issue distributions across production lines side by side. Ungrouped mode is useful for a site-wide total; grouped mode reveals whether one line is disproportionately responsible for a particular issue type.
+</Tip>
+
+## Dataframe display options
+
+The table is rendered with two options that keep the UI clean regardless of row count:
+
+```python
+st.dataframe(rows, hide_index=True, use_container_width=True)
+```
+
+`hide_index=True` suppresses the default integer row index, and `use_container_width=True` stretches the table to fill the available page width. If the query returns no rows, `st.info("No issues found for the selected scope.")` is shown in place of the table.

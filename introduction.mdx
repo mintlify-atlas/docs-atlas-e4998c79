@@ -1,0 +1,65 @@
+---
+title: "SteelWorks: Operations Issue Metrics Dashboard"
+sidebarTitle: "Introduction"
+description: "SteelWorks is a Streamlit dashboard for manufacturing teams to track weekly production issues, filter by line and week, and export reports to CSV."
+---
+
+SteelWorks is a Streamlit-based web dashboard built for manufacturing operations teams who need a fast, reliable way to review weekly production issues. It lets operators and managers filter data by calendar week and production line, inspect issue summaries grouped by type or line, examine affected lots, and download the results as CSV reports — all from a single browser tab. Whether you are running it locally against a live PostgreSQL database or spinning it up on Render with Docker, SteelWorks is designed to stay out of your way and put your data front and centre.
+
+## Architecture
+
+SteelWorks is organized into three clean layers that keep the UI, business logic, and data access concerns strictly separated.
+
+```
+Streamlit UI  →  OperationsMetricsService  →  OperationsRepository  →  PostgreSQL
+```
+
+| Layer | Responsibility |
+|---|---|
+| **Streamlit UI** (`streamlit_app.py`) | Renders filters, data tables, totals, and CSV download buttons. Reads configuration from `.env` and initializes Sentry when a DSN is present. |
+| **OperationsMetricsService** (`app/service.py`) | Orchestrates data retrieval and CSV export. Holds in-memory fallback data so the dashboard works without a live database. |
+| **OperationsRepository** (`app/repository.py`) | Executes SQL queries against PostgreSQL via SQLAlchemy and pg8000. Normalizes incoming `DATABASE_URL` strings to the correct driver scheme. |
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Week &amp; Line Filters" icon="filter" href="/dashboard/filters">
+    Select any production week and one or more active lines from dropdown controls. The entire dashboard — issue summary, affected lots, and CSV exports — updates instantly.
+  </Card>
+  <Card title="Issue Summary" icon="chart-bar" href="/dashboard/issue-summary">
+    View issue counts grouped by issue type, with an optional breakdown by production line. A running total is shown beneath the table.
+  </Card>
+  <Card title="Affected Lots" icon="boxes-stacked" href="/dashboard/affected-lots">
+    See every production lot impacted by issues in the selected scope, including the number of issues and all issue types recorded against that lot.
+  </Card>
+  <Card title="CSV Exports" icon="file-csv" href="/dashboard/csv-exports">
+    Download the issue summary or affected lots table as a CSV file directly from the dashboard with a single click.
+  </Card>
+  <Card title="Comprehensive Test Suite" icon="flask-vial" href="/development/testing">
+    Unit, integration, and Playwright end-to-end tests. Integration tests automatically start a local Docker Postgres container so you never need to configure one manually.
+  </Card>
+  <Card title="Docker &amp; Render Deployment" icon="docker" href="/deployment/docker">
+    A production-ready Dockerfile and Render deployment guide are included. The image respects Render's `PORT` environment variable out of the box.
+  </Card>
+  <Card title="Sentry Error Monitoring" icon="bell" href="/deployment/monitoring">
+    Initialise Sentry by adding a `SENTRY_DSN` to your environment. Leave it blank to run without any monitoring overhead.
+  </Card>
+  <Card title="CI / CD Pipeline" icon="arrows-rotate" href="/development/ci-cd">
+    GitHub Actions runs pre-commit quality checks and builds the Docker image on every pull request and push to `main`.
+  </Card>
+</CardGroup>
+
+## What's included
+
+| Area | What you get |
+|---|---|
+| **Dashboard filters** | Week selector (single) and production line multi-select with a "Group by line" toggle |
+| **Issue summary** | Tabular view of issue type counts per week (and optionally per line), plus a grand total |
+| **Affected lots** | Per-lot breakdown of issue count and issue types for the selected scope |
+| **CSV exports** | One-click downloads for both the issue summary and affected lots tables |
+| **Test suite** | `pytest` with unit, integration, and Playwright e2e layers; coverage driven by Docker Postgres |
+| **Docker deployment** | Multi-stage `Dockerfile`, Render web service setup, and UptimeRobot health-check instructions |
+
+<Note>
+  **Offline development mode** — if `DATABASE_URL` is not set, `OperationsMetricsService` automatically serves built-in fallback data: **2 weeks** (2026-W03, 2026-W04), **3 lines** (Line 1, Line 2, Line 4), and **6 issue occurrences**. This lets you explore the full dashboard UI without provisioning a PostgreSQL database. See the [Quickstart](/quickstart) for details.
+</Note>

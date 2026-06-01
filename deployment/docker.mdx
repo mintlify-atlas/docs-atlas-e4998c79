@@ -1,0 +1,80 @@
+---
+title: "Build and run SteelWorks with Docker"
+sidebarTitle: "Docker"
+description: "How to build the SteelWorks Docker image locally, configure environment variables, and run the Streamlit dashboard in a container on port 8501."
+---
+
+SteelWorks ships a production-ready Dockerfile based on `python:3.13-slim` that installs Poetry and runs the Streamlit app. The image is self-contained — no local Python installation is required to run the dashboard once built.
+
+## Dockerfile
+
+The complete Dockerfile used to build the SteelWorks image:
+
+```dockerfile
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8501 \
+    POETRY_VERSION=2.1.3 \
+    POETRY_VIRTUALENVS_CREATE=false
+
+WORKDIR /app
+
+RUN pip install "poetry==$POETRY_VERSION"
+
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --only main --no-interaction --no-ansi --no-root
+
+COPY . .
+
+EXPOSE 8501
+
+CMD ["sh", "-c", "poetry run streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=${PORT}"]
+```
+
+## Build and run locally
+
+<Steps>
+  <Step title="Build the image">
+    Run the following command from the root of the repository to build the Docker image and tag it as `steelworks`:
+
+    ```bash
+    docker build -t steelworks .
+    ```
+  </Step>
+  <Step title="Run the container">
+    Start the container, mapping port 8501 and passing your production database connection string:
+
+    ```bash
+    docker run -p 8501:8501 -e DATABASE_URL=postgresql+pg8000://... steelworks
+    ```
+  </Step>
+  <Step title="Open the dashboard">
+    Navigate to [http://localhost:8501](http://localhost:8501) in your browser. The Operations Issue Metrics dashboard will load once the container is running.
+  </Step>
+</Steps>
+
+## Environment variables at runtime
+
+Pass environment variables to the container using the `-e` flag. At minimum, `DATABASE_URL` is required for the dashboard to start. `SENTRY_DSN` is optional and enables error tracking:
+
+```bash
+docker run -p 8501:8501 \
+  -e DATABASE_URL=postgresql+pg8000://... \
+  -e SENTRY_DSN=https://... \
+  steelworks
+```
+
+## PORT variable
+
+The `PORT` environment variable controls which port the Streamlit server listens on inside the container. It defaults to `8501` in the Dockerfile. When deploying to Render, `PORT` is set automatically by the platform and the `CMD` in the Dockerfile reads it via `${PORT}` — no manual override is needed.
+
+<Note>
+  `poetry install --only main` installs only the runtime dependencies declared in the `[tool.poetry.dependencies]` group. Dev tools such as pytest, Playwright, and psycopg are excluded from the image, keeping it lean for production use.
+</Note>
+
+<Tip>
+  Add a `.dockerignore` to exclude `.env`, `tests/`, and `poetry.lock` from the build context for faster builds and to avoid accidentally leaking local secrets into the image. The repository already ships a `.dockerignore` that excludes `.env`, `.env.test`, `.venv`, `__pycache__`, and cache directories.
+</Tip>

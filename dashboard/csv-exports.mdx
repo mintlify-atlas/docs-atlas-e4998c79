@@ -1,0 +1,113 @@
+---
+title: "Download issue summary and affected lots as CSV"
+sidebarTitle: "CSV Exports"
+description: "SteelWorks provides one-click CSV downloads for the issue summary and affected lots tables, scoped to the current week and line filters."
+---
+
+SteelWorks exposes two download buttons — one beneath each data table — that let operators and analysts pull the current view into a CSV file without leaving the browser. Both exports are generated on demand from the same service calls that populate the tables, so the CSV always exactly matches what is shown on screen for the active filter selection.
+
+## Issue summary CSV
+
+The first download button appears directly below the Issue Summary table:
+
+```python
+st.download_button(
+    label="Download issue summary CSV",
+    data=service.export_issue_summary_csv(
+        selection=selection, group_by_line=group_by_line
+    ),
+    file_name="issue_summary.csv",
+    mime="text/csv",
+)
+```
+
+**File name:** `issue_summary.csv`
+
+**Columns (ungrouped — `group_by_line=False`):**
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label (e.g. `2026-W03`) |
+| `issue_type_name` | Issue category name |
+| `issue_count` | Number of issues of that type |
+
+**Columns (grouped by line — `group_by_line=True`, the default):**
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label |
+| `line_name` | Production line name |
+| `issue_type_name` | Issue category name |
+| `issue_count` | Number of issues of that type on that line |
+
+### Example content (ungrouped)
+
+```csv
+week_label,issue_type_name,issue_count
+2026-W03,material_shortage,1
+2026-W03,tool_wear,1
+```
+
+## Affected lots CSV
+
+The second download button appears directly below the Affected Lots table:
+
+```python
+st.download_button(
+    label="Download affected lots CSV",
+    data=service.export_affected_lots_csv(selection=selection),
+    file_name="affected_lots.csv",
+    mime="text/csv",
+)
+```
+
+**File name:** `affected_lots.csv`
+
+**Columns:**
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label |
+| `line_name` | Production line name |
+| `lot_code` | Lot identifier |
+| `issue_count` | Number of issues logged against this lot |
+| `issue_types` | Comma-separated, sorted list of distinct issue type names |
+
+### Example content
+
+```csv
+week_label,line_name,lot_code,issue_count,issue_types
+2026-W03,Line 1,LOT-1001,1,tool_wear
+2026-W03,Line 1,LOT-1002,1,material_shortage
+```
+
+## Exports reflect the active filter
+
+Both exports are regenerated every time a download button is clicked — they do not cache a previous result. Changing the week selector, deselecting a production line, or toggling the group-by-line checkbox all update what will be downloaded the next time the button is pressed. The data in the file will always match the tables currently visible on screen.
+
+## Service methods
+
+Both export methods live on `OperationsMetricsService`:
+
+```python
+service.export_issue_summary_csv(selection=selection, group_by_line=group_by_line)
+service.export_affected_lots_csv(selection=selection)
+```
+
+Both methods call the corresponding `get_*` method internally to retrieve the row data, then write it through a `csv.DictWriter` into an `io.StringIO` buffer before encoding to bytes:
+
+```python
+def _to_csv_bytes(self, rows: list[dict[str, Any]], fieldnames: list[str]) -> bytes:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row.get(field, "") for field in fieldnames})
+    return buffer.getvalue().encode("utf-8")
+```
+
+Both methods return `bytes` encoded as UTF-8, which Streamlit's `st.download_button` accepts directly via its `data` parameter.
+
+<Tip>
+  The CSV fieldnames are always written in the exact column order shown in the tables above — `week_label` is always first, `issue_count` is always last in the summary file. A header row is always present in the output even when the filter scope returns no data rows, so downstream tooling can safely assume a consistent structure regardless of whether the current week has any issues.
+</Tip>

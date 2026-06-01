@@ -1,0 +1,275 @@
+---
+title: "OperationsRepository — PostgreSQL data access layer"
+sidebarTitle: "OperationsRepository"
+description: "API reference for OperationsRepository: the SQLAlchemy-backed PostgreSQL repository that executes parameterized queries for SteelWorks issue metrics and lot data."
+---
+
+`OperationsRepository` is the read-side PostgreSQL repository for SteelWorks. It implements the `OperationsDataSource` Protocol and executes all SQL via SQLAlchemy Core with parameterized queries — never string interpolation. Every public method returns plain `list[dict]` values so the Streamlit UI layer has no SQLAlchemy dependency.
+
+---
+
+## Constructor and factory
+
+### `__init__(engine: Engine) -> None`
+
+Accepts a pre-built SQLAlchemy `Engine` directly. Use this constructor when you need full control over engine configuration (e.g. connection-pool tuning in tests).
+
+```python
+from sqlalchemy import create_engine
+from app.repository import OperationsRepository
+
+engine = create_engine("postgresql+pg8000://user:pass@host:5432/dbname", future=True)
+repo = OperationsRepository(engine=engine)
+```
+
+<ParamField path="engine" type="sqlalchemy.engine.Engine" required>
+  A SQLAlchemy `Engine` instance pointed at a SteelWorks PostgreSQL database.
+</ParamField>
+
+---
+
+### `from_database_url(database_url: str) -> OperationsRepository`
+
+Classmethod factory. Normalizes the connection URL, creates the engine with `future=True`, logs the safe target (`host:port/dbname`), and returns a fully initialized `OperationsRepository`.
+
+```python
+repo = OperationsRepository.from_database_url(
+    "postgresql+pg8000://user:pass@host:5432/dbname"
+)
+```
+
+<ParamField path="database_url" type="str" required>
+  A PostgreSQL connection URL. The following prefixes are automatically normalized to `postgresql+pg8000://` before the engine is created:
+
+  | Input prefix | Normalized to |
+  |---|---|
+  | `postgres://` | `postgresql+pg8000://` |
+  | `postgresql://` | `postgresql+pg8000://` |
+  | `postgresql+psycopg://` | `postgresql+pg8000://` |
+
+  Any other scheme (e.g. `postgresql+pg8000://` already) is passed through unchanged after stripping leading/trailing whitespace.
+</ParamField>
+
+---
+
+## Methods
+
+### `get_available_weeks() -> list[dict[str, Any]]`
+
+Returns all calendar weeks in the database, ordered chronologically by `start_date`. Used to populate the **Week** filter dropdown in the SteelWorks dashboard.
+
+```sql
+SELECT
+  calendar_week_id,
+  week_label
+FROM calendar_weeks
+ORDER BY start_date
+```
+
+**Returns** a list of dicts. Each dict contains:
+
+<ResponseField name="calendar_week_id" type="int">
+  Primary key of the calendar week row.
+</ResponseField>
+<ResponseField name="week_label" type="str">
+  ISO-style label for the week, e.g. `2024-W03`. Always matches the pattern `^[0-9]{4}-W[0-9]{2}$`.
+</ResponseField>
+
+---
+
+### `get_available_lines() -> list[dict[str, Any]]`
+
+Returns all **active** production lines, ordered alphabetically by `line_name`. Rows where `is_active = FALSE` are excluded. Used to populate the **Production Lines** multi-select in the dashboard.
+
+```sql
+SELECT
+  production_line_id,
+  line_name,
+  is_active
+FROM production_lines
+WHERE is_active = TRUE
+ORDER BY line_name
+```
+
+**Returns** a list of dicts. Each dict contains:
+
+<ResponseField name="production_line_id" type="int">
+  Primary key of the production line.
+</ResponseField>
+<ResponseField name="line_name" type="str">
+  Human-readable line name, e.g. `Line A`.
+</ResponseField>
+<ResponseField name="is_active" type="bool">
+  Always `True` for rows returned by this method.
+</ResponseField>
+
+---
+
+### `get_issue_summary(week_id: int, line_ids: list[int], group_by_line: bool) -> list[dict[str, Any]]`
+
+Returns aggregated production-issue counts for the given calendar week and set of production lines. The `group_by_line` flag controls whether results are broken down per line or rolled up across all selected lines.
+
+<ParamField path="week_id" type="int" required>
+  The `calendar_week_id` to filter by.
+</ParamField>
+<ParamField path="line_ids" type="list[int]" required>
+  List of `production_line_id` values to include. **If the list is empty the method returns `[]` immediately** without issuing any database query.
+</ParamField>
+<ParamField path="group_by_line" type="bool" required>
+  When `False`, results are grouped by `week_label` and `issue_type_name` (totals across all selected lines). When `True`, results are further broken down by `line_name`.
+</ParamField>
+
+The `line_ids` parameter is passed as a SQLAlchemy expanding `IN` bind parameter (`bindparam("line_ids", expanding=True)`), which renders a safe parameterized `IN (?, ?, …)` clause at execution time.
+
+**SQL — `group_by_line=False`**
+
+```sql
+SELECT
+  cw.week_label,
+  it.issue_type_name,
+  COUNT(*)::integer AS issue_count
+FROM production_issues pi
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN calendar_weeks cw ON cw.calendar_week_id = pr.calendar_week_id
+WHERE pr.calendar_week_id = :week_id
+  AND pr.production_line_id IN :line_ids
+GROUP BY cw.week_label, it.issue_type_name
+ORDER BY it.issue_type_name
+```
+
+**SQL — `group_by_line=True`**
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  it.issue_type_name,
+  COUNT(*)::integer AS issue_count
+FROM production_issues pi
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN calendar_weeks cw ON cw.calendar_week_id = pr.calendar_week_id
+JOIN production_lines pl
+  ON pl.production_line_id = pr.production_line_id
+WHERE pr.calendar_week_id = :week_id
+  AND pr.production_line_id IN :line_ids
+GROUP BY cw.week_label, pl.line_name, it.issue_type_name
+ORDER BY pl.line_name, it.issue_type_name
+```
+
+**Returns** a list of dicts. Each dict contains:
+
+<ResponseField name="week_label" type="str">
+  ISO week label, e.g. `2024-W03`.
+</ResponseField>
+<ResponseField name="line_name" type="str">
+  Present only when `group_by_line=True`.
+</ResponseField>
+<ResponseField name="issue_type_name" type="str">
+  Name of the issue type, e.g. `Dimensional Variance`.
+</ResponseField>
+<ResponseField name="issue_count" type="int">
+  Number of production issues of this type within the selected scope.
+</ResponseField>
+
+---
+
+### `get_affected_lots(week_id: int, line_ids: list[int]) -> list[dict[str, Any]]`
+
+Returns every lot that recorded at least one production issue within the selected week and line scope, together with an aggregated list of the distinct issue types that affected it. Results are ordered by `issue_count DESC, lot_code` so the most-impacted lots surface first.
+
+<ParamField path="week_id" type="int" required>
+  The `calendar_week_id` to filter by.
+</ParamField>
+<ParamField path="line_ids" type="list[int]" required>
+  List of `production_line_id` values to include. **If the list is empty the method returns `[]` immediately** without issuing any database query.
+</ParamField>
+
+Like `get_issue_summary`, the `line_ids` parameter uses `bindparam("line_ids", expanding=True)`.
+
+**SQL**
+
+```sql
+SELECT
+  cw.week_label,
+  pl.line_name,
+  l.lot_code,
+  COUNT(*)::integer AS issue_count,
+  STRING_AGG(
+    DISTINCT it.issue_type_name,
+    ', '
+    ORDER BY it.issue_type_name
+  ) AS issue_types
+FROM production_issues pi
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN calendar_weeks cw ON cw.calendar_week_id = pr.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = pr.production_line_id
+JOIN lots l ON l.lot_id = pr.lot_id
+WHERE pr.calendar_week_id = :week_id
+  AND pr.production_line_id IN :line_ids
+GROUP BY cw.week_label, pl.line_name, l.lot_code
+ORDER BY issue_count DESC, l.lot_code
+```
+
+**Returns** a list of dicts. Each dict contains:
+
+<ResponseField name="week_label" type="str">
+  ISO week label, e.g. `2024-W03`.
+</ResponseField>
+<ResponseField name="line_name" type="str">
+  Name of the production line the lot ran on.
+</ResponseField>
+<ResponseField name="lot_code" type="str">
+  Unique lot identifier, e.g. `LOT-00042`.
+</ResponseField>
+<ResponseField name="issue_count" type="int">
+  Total number of production issues recorded against this lot in the selected scope.
+</ResponseField>
+<ResponseField name="issue_types" type="str">
+  Comma-separated, alphabetically ordered list of distinct issue type names that affected the lot, produced by `STRING_AGG(DISTINCT …)`.
+</ResponseField>
+
+---
+
+## Internal helpers
+
+These static methods are used internally by the class and are not part of the public interface. They are documented here for completeness.
+
+### `_normalize_database_url(database_url: str) -> str` *(staticmethod)*
+
+Strips leading/trailing whitespace from the URL and rewrites the scheme so that the engine always uses the `pg8000` pure-Python driver.
+
+| Input prefix | Output prefix |
+|---|---|
+| `postgres://` | `postgresql+pg8000://` |
+| `postgresql://` | `postgresql+pg8000://` |
+| `postgresql+psycopg://` | `postgresql+pg8000://` |
+
+Any other scheme is returned as-is (after stripping whitespace).
+
+---
+
+### `_safe_database_target(database_url: str) -> str` *(staticmethod)*
+
+Parses the URL with `urllib.parse.urlparse` and returns only `host:port/dbname` (or `host/dbname` when no port is present). This credential-free string is used exclusively in log messages — passwords and usernames are never logged.
+
+```python
+OperationsRepository._safe_database_target(
+    "postgresql+pg8000://user:secret@db.example.com:5432/steelworks"
+)
+# → "db.example.com:5432/steelworks"
+```
+
+---
+
+## Execution model
+
+<Note>
+  Every query is executed inside `engine.begin()` as a context manager, which opens a connection from the pool, begins a transaction, and automatically commits or rolls back on exit. Rows are retrieved by calling `.mappings().all()` on the result, which returns SQLAlchemy `RowMapping` objects. The internal `_fetch_all` helper converts these to plain `dict` objects before returning them to the caller.
+</Note>
+
+<Warning>
+  `get_issue_summary` and `get_affected_lots` both use SQLAlchemy's expanding `IN` bind parameters. Passing an empty list for `line_ids` would cause a runtime SQL error, so **both methods short-circuit and return `[]` before any database round-trip when `line_ids` is empty**. Always check the return value before rendering results in the UI.
+</Warning>

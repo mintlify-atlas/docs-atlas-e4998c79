@@ -1,0 +1,120 @@
+---
+title: "OperationsDataSource Protocol — repository interface"
+sidebarTitle: "OperationsDataSource"
+description: "The OperationsDataSource Protocol defines the repository interface that OperationsMetricsService depends on, enabling custom data sources and test doubles."
+---
+
+`OperationsDataSource` is a `typing.Protocol` that defines the contract between `OperationsMetricsService` and its data source. Any object that implements these four methods with compatible signatures can be passed as the `repository` argument to the service — no inheritance or explicit registration is required.
+
+## Protocol definition
+
+```python
+from typing import Any, Protocol
+
+class OperationsDataSource(Protocol):
+    def get_available_weeks(self) -> list[dict[str, Any]]: ...
+    def get_available_lines(self) -> list[dict[str, Any]]: ...
+    def get_issue_summary(
+        self, week_id: int, line_ids: list[int], group_by_line: bool
+    ) -> list[dict[str, Any]]: ...
+    def get_affected_lots(
+        self, week_id: int, line_ids: list[int]
+    ) -> list[dict[str, Any]]: ...
+```
+
+---
+
+## Method signatures
+
+### `get_available_weeks`
+
+```python
+get_available_weeks() -> list[dict[str, Any]]
+```
+
+Returns all selectable production weeks. Each dict must contain at minimum the keys consumed by `OperationsMetricsService`: `calendar_week_id` (int) and `week_label` (str).
+
+---
+
+### `get_available_lines`
+
+```python
+get_available_lines() -> list[dict[str, Any]]
+```
+
+Returns the production lines available for selection. Each dict must contain at minimum `production_line_id` (int), `line_name` (str), and `is_active` (bool). The service expects the repository to handle any active/inactive filtering itself.
+
+---
+
+### `get_issue_summary`
+
+```python
+get_issue_summary(
+    self, week_id: int, line_ids: list[int], group_by_line: bool
+) -> list[dict[str, Any]]
+```
+
+Returns aggregated issue counts for the specified week and lines.
+
+<ParamField path="week_id" type="int" required>
+  The `calendar_week_id` of the selected production week.
+</ParamField>
+
+<ParamField path="line_ids" type="list[int]" required>
+  Deduplicated, sorted list of selected `production_line_id` values. The service normalizes line IDs via `normalize_line_ids()` before this method is called.
+</ParamField>
+
+<ParamField path="group_by_line" type="bool" required>
+  When `True`, the returned dicts must include a `line_name` key in addition to `week_label`, `issue_type_name`, and `issue_count`. When `False`, `line_name` is omitted.
+</ParamField>
+
+---
+
+### `get_affected_lots`
+
+```python
+get_affected_lots(
+    self, week_id: int, line_ids: list[int]
+) -> list[dict[str, Any]]
+```
+
+Returns the lots affected by issues in the specified week and lines.
+
+<ParamField path="week_id" type="int" required>
+  The `calendar_week_id` of the selected production week.
+</ParamField>
+
+<ParamField path="line_ids" type="list[int]" required>
+  Deduplicated, sorted list of selected `production_line_id` values.
+</ParamField>
+
+Each returned dict must contain: `week_label` (str), `line_name` (str), `lot_code` (str), `issue_count` (int), and `issue_types` (str, comma-separated).
+
+---
+
+## Implementing a custom data source
+
+Any class that satisfies the four method signatures above works as a repository. The example below shows a minimal test double suitable for unit testing:
+
+```python
+class FakeDataSource:
+    def get_available_weeks(self) -> list[dict]:
+        return [{"calendar_week_id": 1, "week_label": "2026-W01"}]
+
+    def get_available_lines(self) -> list[dict]:
+        return [{"production_line_id": 1, "line_name": "Line A", "is_active": True}]
+
+    def get_issue_summary(self, week_id, line_ids, group_by_line) -> list[dict]:
+        return []
+
+    def get_affected_lots(self, week_id, line_ids) -> list[dict]:
+        return []
+
+service = OperationsMetricsService(repository=FakeDataSource())
+```
+
+<Note>
+  Python uses structural subtyping — `FakeDataSource` does not need to explicitly inherit from or register with `OperationsDataSource`. It just needs to implement the four methods with compatible signatures.
+</Note>
+
+For the built-in PostgreSQL implementation, see [OperationsRepository](/api/operations-repository).

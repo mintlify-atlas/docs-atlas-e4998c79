@@ -1,0 +1,67 @@
+---
+title: "Monitor SteelWorks uptime with UptimeRobot"
+sidebarTitle: "Monitoring"
+description: "Configure UptimeRobot HTTP monitoring for the SteelWorks Streamlit health endpoint and set up email alerts for downtime notifications."
+---
+
+SteelWorks exposes Streamlit's built-in health check endpoint, which UptimeRobot can poll on a regular interval to detect downtime and trigger alert notifications before users are affected.
+
+## Health endpoint
+
+Streamlit automatically serves a health endpoint at the following path:
+
+```
+https://<your-service>.onrender.com/_stcore/health
+```
+
+The endpoint returns HTTP 200 when the Streamlit server is running and ready to serve traffic. It requires no authentication and adds no load to the database.
+
+## UptimeRobot setup
+
+<Steps>
+  <Step title="Open UptimeRobot">
+    Go to [UptimeRobot](https://uptimerobot.com) and click **Start monitoring in 30 seconds**.
+  </Step>
+  <Step title="Sign in with GitHub">
+    Authenticate using your GitHub account to create or log in to your UptimeRobot account.
+  </Step>
+  <Step title="Choose monitor type">
+    Select **HTTP/website monitoring** as the monitor type.
+  </Step>
+  <Step title="Enter the health endpoint URL">
+    Paste your SteelWorks health endpoint into the URL field:
+
+    ```
+    https://<your-service>.onrender.com/_stcore/health
+    ```
+  </Step>
+  <Step title="Create the monitor">
+    Click **Create Monitor**. UptimeRobot will begin polling the endpoint at the configured interval (default: every 5 minutes on the free plan).
+  </Step>
+  <Step title="Send a test notification">
+    Use the **Send a test email notification** option to verify that alert emails are delivered to your inbox.
+  </Step>
+  <Step title="Finish setup">
+    Click **Finish Setup**. Your monitor is now active and will alert you if the health endpoint stops returning HTTP 200.
+  </Step>
+</Steps>
+
+## Sentry error monitoring
+
+In addition to uptime monitoring, SteelWorks integrates with Sentry for application-level error tracking. The SDK is initialized inside `app/streamlit_app.py` with the following settings:
+
+| Setting | Value |
+|---------|-------|
+| `send_default_pii` | `False` — no personally identifiable information is attached to events |
+| `traces_sample_rate` | `0.0` — performance tracing is disabled |
+| `enable_logs` | `False` — Sentry log integration is disabled |
+
+To enable Sentry, set the `SENTRY_DSN` environment variable in your Render service. No code changes are required — the app reads the variable at startup and initializes the SDK automatically when the value is present.
+
+<Note>
+  Sentry is only initialized when `SENTRY_DSN` is set and non-empty. The app runs without any issue if the variable is absent — Sentry integration is entirely optional.
+</Note>
+
+<Tip>
+  Combine UptimeRobot (availability monitoring) with Sentry (error tracking) for full production observability. UptimeRobot tells you when the service is down; Sentry tells you why it crashed.
+</Tip>

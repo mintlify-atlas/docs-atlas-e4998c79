@@ -1,0 +1,64 @@
+---
+title: "Affected lots — per-lot issue breakdown"
+sidebarTitle: "Affected Lots"
+description: "The affected lots table lists every production lot with at least one issue in the selected scope, showing issue count and comma-separated issue types per lot."
+---
+
+The Affected Lots table shifts the perspective from issue types to individual production lots. For the selected week and lines, it lists every lot that experienced at least one issue, showing how many issues were logged and which types were involved. This makes it easy to identify high-impact lots that need follow-up and to correlate problems with specific lot codes across reporting periods.
+
+## Columns
+
+| Column | Description |
+|---|---|
+| `week_label` | ISO week label for the selected week (e.g. `2026-W03`) |
+| `line_name` | Name of the production line on which the lot ran |
+| `lot_code` | Unique lot identifier (e.g. `LOT-1001`) |
+| `issue_count` | Total number of issues recorded for this lot in the selected scope |
+| `issue_types` | Comma-separated, alphabetically sorted list of distinct issue type names logged against the lot |
+
+## Ordering
+
+Rows are sorted by `issue_count DESC` so the most-affected lots appear at the top. Within the same issue count, rows are further ordered by `lot_code` ascending (alphabetical). This ordering comes directly from the SQL query:
+
+```sql
+ORDER BY issue_count DESC, l.lot_code
+```
+
+## Example output
+
+```
+week_label | line_name | lot_code  | issue_count | issue_types
+2026-W03   | Line 1    | LOT-1001  | 1           | tool_wear
+2026-W03   | Line 1    | LOT-1002  | 1           | material_shortage
+2026-W03   | Line 4    | LOT-3001  | 1           | sensor_fault
+```
+
+## Lot codes in seed data
+
+The following lot codes appear in the default seed dataset:
+
+| Lot code | Lines it appears on |
+|---|---|
+| `LOT-1001` | Line 1 |
+| `LOT-1002` | Line 1 |
+| `LOT-2001` | Line 2 |
+| `LOT-2002` | Line 2 |
+| `LOT-3001` | Line 4 |
+
+A lot may appear in multiple weeks — for example, `LOT-1001` appears in both `2026-W03` (with a `tool_wear` issue) and `2026-W04` (with a `changeover_delay` issue). Within any single week-and-line scope, however, a lot appears at most once in this table, with its issues aggregated into the `issue_count` and `issue_types` columns.
+
+<Note>
+  The `production_issues` table enforces a `UNIQUE` constraint on `production_run_id`, meaning each production run can have at most one primary issue record. As a result, `issue_count` for a lot is equivalent to the number of production runs for that lot that have an issue recorded — it does not represent multiple issues on a single run.
+</Note>
+
+## Dataframe display options
+
+Like the Issue Summary table, the Affected Lots table is rendered with:
+
+```python
+st.dataframe(rows, hide_index=True, use_container_width=True)
+```
+
+If no affected lots are found for the current filter scope, the table is replaced with `st.info("No affected lots found for the selected scope.")`.
+
+For details on the underlying fact tables that back this query, see the [fact tables data model](/data-model/fact-tables).

@@ -1,0 +1,174 @@
+---
+title: "Reference tables — dimensions and lookup data"
+sidebarTitle: "Reference Tables"
+description: "Documentation for SteelWorks dimension tables: production_lines, shifts, calendar_weeks, parts, lots, issue_types, customers, carriers, and sales_orders."
+---
+
+Dimension (reference) tables hold stable lookup data that is shared across multiple fact tables. They change infrequently — new lines, shifts, customers, and issue types are added during setup or when the business expands — but they are joined on nearly every reporting query. All nine dimension tables use `BIGINT GENERATED ALWAYS AS IDENTITY` synthetic primary keys and enforce natural-key uniqueness through named `UNIQUE` constraints.
+
+---
+
+## production_lines
+
+Tracks the physical production lines in the facility. Only active lines are shown in dashboard filter dropdowns.
+
+<ResponseField name="production_line_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="line_name" type="TEXT" required>
+  Human-readable name for the line (e.g., `Line 1`, `Line 4`). Must be unique across all rows (`uq_production_lines_line_name`).
+</ResponseField>
+
+<ResponseField name="is_active" type="BOOLEAN" required>
+  Indicates whether the line is currently operational. Defaults to `TRUE`. Dashboard filter queries use `WHERE is_active = TRUE` to exclude decommissioned lines.
+</ResponseField>
+
+<Note>
+  Only lines where `is_active = TRUE` are returned by the dashboard's filter query (`SELECT … FROM production_lines WHERE is_active = TRUE ORDER BY line_name`). Decommissioned lines remain in the table for historical reporting.
+</Note>
+
+---
+
+## shifts
+
+Defines the valid shift names. The `CHECK` constraint acts as a database-level enum, preventing any value outside the three allowed names from being inserted.
+
+<ResponseField name="shift_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="shift_name" type="TEXT" required>
+  Name of the shift. Must be one of `day`, `night`, or `swing` (enforced by `ck_shifts_shift_name`). Also unique across all rows (`uq_shifts_shift_name`).
+</ResponseField>
+
+---
+
+## calendar_weeks
+
+Stores ISO week periods with explicit start and end dates. Persisting week rows rather than deriving weeks from dates ensures consistent weekly grouping across all reporting queries.
+
+<ResponseField name="calendar_week_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="week_label" type="TEXT" required>
+  ISO 8601 week label in the format `YYYY-Www` (e.g., `2026-W03`). Validated by the regex check constraint `ck_calendar_weeks_week_label` (`^[0-9]{4}-W[0-9]{2}$`). Unique across all rows (`uq_calendar_weeks_week_label`).
+</ResponseField>
+
+<ResponseField name="start_date" type="DATE" required>
+  First day (Monday) of the ISO week.
+</ResponseField>
+
+<ResponseField name="end_date" type="DATE" required>
+  Last day (Sunday) of the ISO week. The constraint `ck_calendar_weeks_date_order` enforces `start_date <= end_date`. The pair `(start_date, end_date)` is also unique (`uq_calendar_weeks_date_range`).
+</ResponseField>
+
+---
+
+## parts
+
+Holds the master list of part numbers manufactured or shipped by the facility.
+
+<ResponseField name="part_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="part_number" type="TEXT" required>
+  Manufacturer part number (e.g., `SW-6899-B`, `HX-1010-A`, `BR-2222-C`). Must be unique across all rows (`uq_parts_part_number`).
+</ResponseField>
+
+<ResponseField name="description" type="TEXT">
+  Optional free-text description of the part (e.g., `Switch assembly`, `Hydraulic housing`).
+</ResponseField>
+
+---
+
+## lots
+
+Production lot codes tied to a specific part. A lot represents a discrete batch of material tracked through production and shipping.
+
+<ResponseField name="lot_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="lot_code" type="TEXT" required>
+  Unique lot identifier (e.g., `LOT-1001`, `LOT-2002`). Must be unique across all rows (`uq_lots_lot_code`).
+</ResponseField>
+
+<ResponseField name="part_id" type="BIGINT" required>
+  Foreign key to `parts(part_id)`. A lot must reference an existing part. Deletion of the parent part is blocked while any lot references it (`ON DELETE RESTRICT`, constraint `fk_lots_part_id`).
+</ResponseField>
+
+<ResponseField name="created_date" type="DATE">
+  Optional date the lot was opened. Used for lead-time calculations (e.g., first production run date vs. first ship date).
+</ResponseField>
+
+---
+
+## issue_types
+
+Enum-like lookup table for classifying production issues. Adding new issue types here does not require schema changes — simply insert a new row.
+
+<ResponseField name="issue_type_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="issue_type_name" type="TEXT" required>
+  Machine-readable issue classification name. Must be unique across all rows (`uq_issue_types_name`). The seed data populates six values:
+
+  | `issue_type_name` |
+  |---|
+  | `material_shortage` |
+  | `changeover_delay` |
+  | `tool_wear` |
+  | `sensor_fault` |
+  | `quality_hold` |
+  | `operator_training` |
+</ResponseField>
+
+---
+
+## customers
+
+Customer organizations that place sales orders against the facility.
+
+<ResponseField name="customer_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="customer_name" type="TEXT" required>
+  Full name of the customer organization (e.g., `ACME Industrial`, `Beta Manufacturing`). Must be unique across all rows (`uq_customers_name`).
+</ResponseField>
+
+---
+
+## carriers
+
+Shipping carriers used for outbound shipments. The `carrier_id` column on `shipments` is nullable, so a shipment may exist without a carrier assignment (e.g., for on-hold or backordered records where no carrier has been booked).
+
+<ResponseField name="carrier_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="carrier_name" type="TEXT" required>
+  Name of the carrier (e.g., `UPS`, `FedEx`). Must be unique across all rows (`uq_carriers_name`).
+</ResponseField>
+
+---
+
+## sales_orders
+
+Sales order numbers linked to a customer. One sales order can be fulfilled by multiple shipment records.
+
+<ResponseField name="sales_order_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="sales_order_number" type="TEXT" required>
+  Business-facing order identifier (e.g., `SO-58689`, `SO-52588`). Must be unique across all rows (`uq_sales_orders_number`).
+</ResponseField>
+
+<ResponseField name="customer_id" type="BIGINT" required>
+  Foreign key to `customers(customer_id)`. Deletion of the parent customer is blocked while any sales order references it (`ON DELETE RESTRICT`, constraint `fk_sales_orders_customer_id`).
+</ResponseField>

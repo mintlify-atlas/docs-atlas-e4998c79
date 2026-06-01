@@ -1,0 +1,116 @@
+---
+title: "Configure SteelWorks environment variables"
+sidebarTitle: "Configuration"
+description: "Reference for all SteelWorks environment variables — database connection, Sentry DSN, and test database URL — with examples for each environment."
+---
+
+SteelWorks reads its runtime configuration from environment variables, loading them automatically from a `.env` file at startup via `python-dotenv`. No application code needs to change between environments — you simply swap the `.env` file or set variables directly in your hosting platform. The same mechanism applies to tests, which read from a separate `.env.test` file so test credentials never bleed into the running application.
+
+## Environment files
+
+SteelWorks uses two distinct environment files to keep application and test configuration separate:
+
+| File | Used by | Notes |
+|---|---|---|
+| `.env` | The running Streamlit app | Loaded at startup by `_resolve_database_url()` in `streamlit_app.py`. Override with platform env vars (e.g., Render). |
+| `.env.test` | Integration and end-to-end tests | Read by the test suite. Keeps test database credentials isolated from the app. |
+
+<Warning>
+  Never commit `.env` or `.env.test` to version control. Both files contain sensitive credentials. Add them to `.gitignore` and manage secrets through your platform's secret management instead.
+</Warning>
+
+## Environment variables
+
+<ParamField body="DATABASE_URL" type="string" required>
+  The PostgreSQL connection string used by the running application.
+
+  Must use the `postgresql+pg8000://` driver scheme so SQLAlchemy selects the correct pure-Python pg8000 driver. See [URL normalization](#url-normalization) below for the forms SteelWorks will automatically convert.
+
+  ```env
+  DATABASE_URL=postgresql+pg8000://user:pass@host:5432/dbname
+  ```
+
+  If this variable is absent or empty, the dashboard will not start and will display an error instructing you to add it to `.env`. During development you may omit it entirely to use the built-in fallback data — but the error message is shown in that case; see the [Quickstart](/quickstart) for details on the offline mode.
+</ParamField>
+
+<ParamField body="SENTRY_DSN" type="string">
+  The Sentry Data Source Name (DSN) used to initialise error monitoring.
+
+  When present and non-empty, SteelWorks calls `sentry_sdk.init()` with `send_default_pii=False` and `traces_sample_rate=0.0`. Leave this variable blank or omit it entirely to run without any Sentry overhead.
+
+  ```env
+  SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+  ```
+
+  When configuring this value in the Render dashboard, enter the DSN **unquoted** — do not wrap it in single or double quotes.
+</ParamField>
+
+<ParamField body="TEST_DATABASE_URL" type="string">
+  The PostgreSQL connection string used exclusively by the integration and end-to-end test suite. Defined in `.env.test`, not in `.env`.
+
+  **Default local value:**
+
+  ```env
+  TEST_DATABASE_URL=postgresql+pg8000://devuser:devpass@127.0.0.1:5433/testdb
+  ```
+
+  When the URL resolves to `127.0.0.1:5433/testdb`, the test suite automatically starts a local Docker Postgres container (`postgres:18`) at that address if one is not already running, then resets the schema and seeds test data before executing tests. This means you do not need to manage a test database manually.
+
+  The alternative key `DATABASE_URL_TEST` is also accepted for compatibility.
+</ParamField>
+
+<ParamField body="PORT" type="integer">
+  The port the Streamlit server listens on inside the Docker container.
+
+  Defaults to `8501` (Streamlit's built-in default). When deploying to Render, this variable is set automatically by the platform and the Dockerfile reads it at container startup — you do not need to set it yourself.
+
+  ```env
+  PORT=8501
+  ```
+</ParamField>
+
+<ParamField body="APP_LOG_LEVEL" type="string">
+  Controls the verbosity of application logging. Accepts any standard Python log level name.
+
+  **Default:** `INFO`
+
+  ```env
+  APP_LOG_LEVEL=DEBUG
+  ```
+
+  Accepted values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. See [Logging](#logging) below for details on how this variable is applied.
+</ParamField>
+
+## URL normalization
+
+`OperationsRepository` normalizes incoming `DATABASE_URL` values before passing them to SQLAlchemy. This means you can paste a URL directly from Render or another provider without manually editing the scheme:
+
+```
+postgres://...              →  postgresql+pg8000://...
+postgresql://...            →  postgresql+pg8000://...
+postgresql+psycopg://...    →  postgresql+pg8000://...
+```
+
+Any URL that already starts with `postgresql+pg8000://` is left unchanged. Using the explicit form in your `.env` file is still recommended to make the driver choice visible at a glance.
+
+## Logging
+
+SteelWorks configures application-wide logging through the `configure_logging()` function in `app/logging_config.py`. This function is called once at the start of `main()` before any Streamlit components are rendered.
+
+The log level is read from the `APP_LOG_LEVEL` environment variable (default: `INFO`) and applied to the root logger. The log format is:
+
+```
+%(asctime)s %(levelname)s %(name)s - %(message)s
+```
+
+Because Streamlit can re-run the script multiple times within a single process, `configure_logging()` checks whether handlers are already attached to the root logger before calling `logging.basicConfig()`. If handlers are present it only updates the log level, avoiding duplicate log entries.
+
+To increase verbosity during development, add the following to your `.env` file:
+
+```env
+APP_LOG_LEVEL=DEBUG
+```
+
+<Tip>
+  When deploying to Render, set all environment variables — including `DATABASE_URL`, `SENTRY_DSN`, and `APP_LOG_LEVEL` — directly in the Render dashboard under **Environment Variables** rather than shipping a `.env` file inside the Docker image. See [Render Deployment](/deployment/render) for a step-by-step walkthrough.
+</Tip>

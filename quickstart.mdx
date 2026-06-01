@@ -1,47 +1,103 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with SteelWorks in 5 steps"
+sidebarTitle: "Quickstart"
+description: "Install SteelWorks, connect it to PostgreSQL, seed the database, and launch the Streamlit dashboard with a working dataset in under 10 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+By the end of this guide you will have a fully functional SteelWorks dashboard running on your local machine, connected to a seeded PostgreSQL database, and accessible in your browser at `http://localhost:8501`. The whole process takes under ten minutes if you already have the prerequisites installed.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Verify prerequisites">
+    SteelWorks requires **Python 3.13**, **Poetry**, and **Docker Desktop** (running). Confirm all three are available before continuing:
 
     ```bash
-    npm install your-package
+    python --version
+    # Python 3.13.x
+
+    poetry --version
+    # Poetry (version 2.x.x)
+
+    docker info --format '{{.ServerVersion}}'
+    # e.g. 27.x.x
     ```
+
+    If any command is not found, install the missing tool before proceeding:
+
+    - **Python 3.13** — [python.org/downloads](https://www.python.org/downloads/)
+    - **Poetry** — [python-poetry.org/docs/#installation](https://python-poetry.org/docs/#installation)
+    - **Docker Desktop** — [docs.docker.com/get-docker](https://docs.docker.com/get-docker/)
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Clone the repository and install dependencies">
+    Clone SteelWorks from GitHub, change into the project directory, install the Python dependencies with Poetry, and then install the Playwright browser binaries used by the end-to-end test suite:
 
     ```bash
-    your-cli init
+    git clone https://github.com/kishnahai0806/SteelWorks.git && cd SteelWorks
     ```
+
+    ```bash
+    poetry install
+    poetry run playwright install
+    ```
+
+    `poetry install` creates an isolated virtual environment and installs all runtime and development dependencies declared in `pyproject.toml`, including Streamlit, SQLAlchemy, pg8000, sentry-sdk, pytest, and the Playwright test runner.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Create your .env file">
+    SteelWorks reads its configuration from a `.env` file in the project root. Create the file and set `DATABASE_URL` to your PostgreSQL connection string:
+
+    ```env
+    DATABASE_URL=postgresql+pg8000://user:pass@host:5432/dbname
+    ```
+
+    The connection string **must** use the `postgresql+pg8000://` driver scheme. If you have a URL that starts with `postgres://`, `postgresql://`, or `postgresql+psycopg://`, SteelWorks normalizes it automatically — but using the explicit form avoids any ambiguity.
+
+    To enable Sentry error monitoring, add the optional `SENTRY_DSN` variable:
+
+    ```env
+    DATABASE_URL=postgresql+pg8000://user:pass@host:5432/dbname
+    SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+    ```
+
+    Leave `SENTRY_DSN` blank or omit it entirely to run without Sentry.
+
+    <Warning>
+      Never commit `.env` to version control. The file is listed in `.gitignore` by default. Keep your credentials out of your repository history.
+    </Warning>
+  </Step>
+
+  <Step title="Initialize the database">
+    Apply the schema DDL and load the seed data into your PostgreSQL instance using `psql`. The `$DATABASE_URL` variable is substituted from your shell environment (or pass the connection string directly):
 
     ```bash
-    your-cli start
+    psql $DATABASE_URL -f db/schema.sql
+    psql $DATABASE_URL -f db/seed.sql
     ```
+
+    `schema.sql` creates all required tables (`calendar_weeks`, `production_lines`, `issue_types`, `lots`, `production_runs`, `production_issues`). `seed.sql` populates them with representative sample data so the dashboard has something to display on first launch.
+  </Step>
+
+  <Step title="Launch the dashboard">
+    Start the Streamlit development server from the project root:
+
+    ```bash
+    poetry run streamlit run streamlit_app.py
+    ```
+
+    Streamlit will print the local URL to the terminal. Open it in your browser:
+
+    ```
+    http://localhost:8501
+    ```
+
+    You should see the **Operations Issue Metrics** dashboard with week and production-line filter controls, an issue summary table, an affected lots table, and CSV download buttons.
   </Step>
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  **No database? No problem.** If `DATABASE_URL` is not set in your environment, `OperationsMetricsService` falls back to built-in in-memory data — **2 weeks** (2026-W03 and 2026-W04), **3 production lines** (Line 1, Line 2, Line 4), and **6 issue occurrences** — so you can explore every part of the dashboard UI without provisioning PostgreSQL at all. Simply skip Steps 3 and 4 and run the app; it will start and serve the fallback dataset automatically.
 </Tip>
+
+<Note>
+  For a full reference of all supported environment variables — including `SENTRY_DSN`, `TEST_DATABASE_URL`, `PORT`, and `APP_LOG_LEVEL` — see the [Configuration](/configuration) page.
+</Note>

@@ -1,0 +1,167 @@
+---
+title: "Testing SteelWorks — unit, integration, and end-to-end"
+sidebarTitle: "Testing"
+description: "How to run SteelWorks unit, integration, and Playwright end-to-end tests, including how the test database container is managed automatically."
+---
+
+SteelWorks ships with three test layers that give you fast feedback at every level of the stack. Unit tests run in milliseconds with no external dependencies, integration tests verify real SQL against a live PostgreSQL instance, and Playwright end-to-end tests drive a full browser session against a locally running Streamlit app. All three layers are discovered by a single `pytest` invocation.
+
+## Setup
+
+<Steps>
+  <Step title="Install project and dev dependencies">
+    Use Poetry to install everything, including pytest, Playwright, and psycopg:
+
+    ```bash
+    poetry install
+    ```
+  </Step>
+  <Step title="Install Playwright browsers">
+    Download the browser binaries used by the E2E test suite:
+
+    ```bash
+    poetry run playwright install
+    ```
+  </Step>
+  <Step title="Create .env.test">
+    Integration and E2E tests read the test database URL from `.env.test` in the repository root. Create the file with the default local connection string:
+
+    ```bash
+    TEST_DATABASE_URL=postgresql+pg8000://devuser:devpass@127.0.0.1:5433/testdb
+    ```
+
+    The `DATABASE_URL_TEST` key is also accepted as a fallback for slide compatibility.
+
+    <Note>
+      If `TEST_DATABASE_URL` (and `DATABASE_URL_TEST`) are both absent, integration and E2E tests are skipped automatically. Unit tests always run regardless.
+    </Note>
+  </Step>
+</Steps>
+
+## Running tests
+
+<Tabs>
+  <Tab title="All tests">
+    Run every layer — unit, integration, and E2E — in a single command:
+
+    ```bash
+    poetry run pytest -q
+    ```
+  </Tab>
+  <Tab title="Unit only">
+    ```bash
+    poetry run pytest tests/unit -q
+    ```
+  </Tab>
+  <Tab title="Integration only">
+    ```bash
+    poetry run pytest tests/integration -q
+    ```
+  </Tab>
+  <Tab title="E2E only">
+    ```bash
+    poetry run pytest tests/e2e -q
+    ```
+  </Tab>
+</Tabs>
+
+## Unit tests
+
+Unit tests live in `tests/unit/test_operations_service.py`. They instantiate `OperationsMetricsService()` **without** passing a repository, which activates the service's built-in in-memory fallback data (2 weeks, 3 lines, 6 issue occurrences). No database, no Docker, no network — the full suite runs in under a second.
+
+| Test function | What it verifies |
+|---|---|
+| `test_normalize_line_ids_deduplicates_and_sorts` | Passing `[4, 1, 4, 2, 1]` returns `[1, 2, 4]` — duplicates dropped, result sorted |
+| `test_get_available_weeks_returns_selectable_values` | `get_available_weeks()` returns exactly `2026-W03` and `2026-W04` |
+| `test_get_available_lines_returns_selectable_values` | `get_available_lines()` returns only active lines (Line 2 is inactive and excluded) |
+| `test_get_issue_summary_uses_selection_scope` | Grouped issue summary for week 1, lines `[1,2,3]` returns correct per-line counts |
+| `test_get_affected_lots_returns_lot_level_rows` | Lot-level aggregation for week 1, line 1 yields `LOT-1001` (tool\_wear) and `LOT-1002` (material\_shortage) |
+| `test_export_issue_summary_csv_matches_display_scope` | Exported bytes decode to valid CSV with correct headers and `2026-W03` rows |
+| `test_export_affected_lots_csv_matches_display_scope` | Exported bytes include the `week_label,line_name,lot_code,issue_count,issue_types` header and a matching data row |
+| `test_get_issue_summary_logs_selected_scope` | Logging at `INFO` level captures `"Issue summary generated from fallback data"`, `week_id=1`, and `line_count=2` |
+| `test_get_affected_lots_logs_when_no_lines_selected` | Calling `get_affected_lots` with an empty `production_line_ids` list returns `[]` and logs `"Affected lots requested with no selected lines"` |
+
+## Integration tests
+
+Integration tests live in `tests/integration/test_operations_service_integration.py`. They exercise `OperationsMetricsService` wired to a real `OperationsRepository` connected to a live PostgreSQL instance.
+
+**Docker container management** is handled automatically by the shared `conftest.py` fixture. When `TEST_DATABASE_URL` points to `127.0.0.1:5433/testdb`, the fixture:
+
+1. Removes any existing container named `postgres18`
+2. Starts a fresh `postgres:18` container on port `5433`
+3. Waits up to 60 seconds for the database to accept connections
+4. Drops and recreates the schema from `db/schema.sql`
+5. Seeds test data from `db/seed.sql`
+6. Tears down the container after the session ends
+
+If `TEST_DATABASE_URL` points to a remote host, the fixture runs the same reset/seed cycle but skips Docker management. As a safety guard, any non-local URL whose database name does not contain the word `test` raises a `RuntimeError` to prevent accidentally wiping production data.
+
+The three integration tests cover the following scenarios:
+
+| Test function | What it verifies |
+|---|---|
+| `test_get_available_filters_from_database` | Weeks list is `["2026-W03", "2026-W04"]`; lines list is `["Line 1", "Line 2", "Line 4"]` against the seeded database |
+| `test_issue_summary_grouped_by_line_uses_selected_scope` | Issue summary for week 1, lines 1 and 4 matches expected `(line_name, issue_type_name, issue_count)` tuples exactly |
+| `test_affected_lots_and_exports_match_database_scope` | Affected lots for week 2, line 2 returns `LOT-2001` and `LOT-2002`; CSV exports contain correct headers and data rows |
+
+<Note>
+  Integration and E2E tests both read `TEST_DATABASE_URL` from `.env.test`. If the environment variable is absent, those tests are skipped. Unit tests are never skipped.
+</Note>
+
+The `db_service` fixture that the integration tests depend on is defined in `tests/conftest.py`:
+
+```python
+@pytest.fixture(scope="session")
+def prepared_test_database(test_database_url: str) -> Generator[str]:
+    parsed = urlparse(test_database_url)
+    local_managed_db = (
+        parsed.hostname in {"localhost", "127.0.0.1"}
+        and parsed.port == 5433
+        and parsed.path.strip("/") == "testdb"
+    )
+
+    # Protects against accidental prod URLs
+    if not local_managed_db and "test" not in parsed.path.strip("/").lower():
+        raise RuntimeError(
+            "Refusing to run destructive test setup on non-test database name. "
+            "Set TEST_DATABASE_URL to a dedicated test DB."
+        )
+
+    if local_managed_db:
+        _start_local_postgres_container()
+
+    psycopg_url = _to_psycopg_url(test_database_url)
+    _wait_for_database(psycopg_url=psycopg_url)
+    _reset_schema_and_seed(psycopg_url=psycopg_url)
+
+    try:
+        yield test_database_url
+    finally:
+        if local_managed_db:
+            _stop_local_postgres_container()
+
+
+@pytest.fixture()
+def db_service(prepared_test_database: str) -> OperationsMetricsService:
+    repository = OperationsRepository.from_database_url(prepared_test_database)
+    return OperationsMetricsService(repository=repository)
+```
+
+## E2E tests
+
+End-to-end tests live in `tests/e2e/test_streamlit_dashboard.py`. They use the Playwright `Page` object to control a real browser against a locally running Streamlit process.
+
+The `streamlit_server_url` session fixture in `tests/e2e/conftest.py` starts the app automatically:
+
+- Depends on `prepared_test_database`, so the Docker container and seed data are ready before the browser opens
+- Launches `streamlit run streamlit_app.py --server.port=8510 --server.headless=true`
+- Passes `DATABASE_URL` from `.env.test` so the app queries the same seeded data as the integration tests
+- Polls `http://127.0.0.1:8510` until a `200` response is received (up to 60 seconds)
+- Terminates the Streamlit process after the session ends
+
+The single E2E test, `test_dashboard_loads_seeded_data`, navigates to the app and asserts:
+
+- The `"Operations Issue Metrics"` heading is visible
+- The `"Issue Summary"` section heading is visible
+- The row count labels `"Issue summary rows: 3"` and `"Affected lots rows: 3"` are present
+- Both `"Download issue summary CSV"` and `"Download affected lots CSV"` buttons are visible

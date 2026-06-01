@@ -1,0 +1,277 @@
+---
+title: "OperationsMetricsService — application service layer"
+sidebarTitle: "OperationsMetricsService"
+description: "API reference for OperationsMetricsService: the application service boundary for SteelWorks that handles issue summaries, affected lots, CSV exports, and in-memory fallback data."
+---
+
+`OperationsMetricsService` is the central application service that SteelWorks' Streamlit UI calls. It accepts an optional `OperationsDataSource` repository; when none is provided, it uses built-in fallback data so the dashboard can run and be tested without a live database connection.
+
+## Constructor
+
+```python
+OperationsMetricsService(repository: OperationsDataSource | None = None)
+```
+
+<ParamField path="repository" type="OperationsDataSource | None" default="None">
+  An object satisfying the [`OperationsDataSource`](/api/operations-data-source) protocol. When `None`, the service uses built-in in-memory fallback data containing **2 weeks** (`2026-W03`, `2026-W04`), **3 production lines** (Line 1, Line 2, Line 4), and **6 issue occurrences**. When a repository is provided, all queries delegate to it.
+</ParamField>
+
+---
+
+## Methods
+
+### `get_available_weeks`
+
+```python
+get_available_weeks() -> list[dict[str, Any]]
+```
+
+Returns the full list of selectable production weeks, ordered by `calendar_week_id`. When a repository is configured, the result comes directly from `repository.get_available_weeks()`; otherwise it is derived from the built-in fallback data.
+
+**Returns** `list[dict[str, Any]]` — each dict contains:
+
+<ResponseField name="calendar_week_id" type="int">
+  Numeric primary-key identifier for the calendar week.
+</ResponseField>
+
+<ResponseField name="week_label" type="str">
+  Human-readable ISO week string, e.g. `"2026-W03"`.
+</ResponseField>
+
+**Example**
+
+```python
+from app.service import OperationsMetricsService
+
+service = OperationsMetricsService()  # uses fallback data
+weeks = service.get_available_weeks()
+# [
+#   {"calendar_week_id": 1, "week_label": "2026-W03"},
+#   {"calendar_week_id": 2, "week_label": "2026-W04"},
+# ]
+```
+
+---
+
+### `get_available_lines`
+
+```python
+get_available_lines() -> list[dict[str, Any]]
+```
+
+Returns only the **active** production lines (`is_active=True`), sorted alphabetically by `line_name`. When using fallback data, Line 2 (`is_active=False`) is excluded so only Line 1 and Line 4 are returned.
+
+**Returns** `list[dict[str, Any]]` — each dict contains:
+
+<ResponseField name="production_line_id" type="int">
+  Numeric primary-key identifier for the production line.
+</ResponseField>
+
+<ResponseField name="line_name" type="str">
+  Display name of the production line, e.g. `"Line 1"`.
+</ResponseField>
+
+<ResponseField name="is_active" type="bool">
+  Always `True` in the returned list — inactive lines are filtered out before returning.
+</ResponseField>
+
+**Example**
+
+```python
+from app.service import OperationsMetricsService
+
+service = OperationsMetricsService()
+lines = service.get_available_lines()
+# [
+#   {"production_line_id": 1, "line_name": "Line 1", "is_active": True},
+#   {"production_line_id": 3, "line_name": "Line 4", "is_active": True},
+# ]
+```
+
+---
+
+### `get_issue_summary`
+
+```python
+get_issue_summary(selection: IssueFilterSelection, group_by_line: bool) -> list[dict[str, Any]]
+```
+
+Returns aggregated issue counts for the week and production lines specified in `selection`. Line IDs are normalized via `normalize_line_ids()` before any query is executed. Returns an empty list immediately when `selection.production_line_ids` is empty.
+
+<ParamField path="selection" type="IssueFilterSelection" required>
+  A frozen dataclass carrying the selected `calendar_week_id` and `production_line_ids`. See [`IssueFilterSelection`](/api/models).
+</ParamField>
+
+<ParamField path="group_by_line" type="bool" required>
+  When `False`, results are grouped by `(week_label, issue_type_name)`. When `True`, results are also broken down by `line_name`.
+</ParamField>
+
+**Returns** `list[dict[str, Any]]`:
+
+<Expandable title="Keys when group_by_line=False">
+  <ResponseField name="week_label" type="str">
+    ISO week label for the selected week, e.g. `"2026-W03"`.
+  </ResponseField>
+  <ResponseField name="issue_type_name" type="str">
+    Name of the issue type, e.g. `"tool_wear"`.
+  </ResponseField>
+  <ResponseField name="issue_count" type="int">
+    Total number of issue occurrences for this type across all selected lines.
+  </ResponseField>
+</Expandable>
+
+<Expandable title="Keys when group_by_line=True">
+  <ResponseField name="week_label" type="str">
+    ISO week label for the selected week.
+  </ResponseField>
+  <ResponseField name="line_name" type="str">
+    Name of the production line, e.g. `"Line 1"`.
+  </ResponseField>
+  <ResponseField name="issue_type_name" type="str">
+    Name of the issue type.
+  </ResponseField>
+  <ResponseField name="issue_count" type="int">
+    Total number of issue occurrences for this type on this line.
+  </ResponseField>
+</Expandable>
+
+**Example**
+
+```python
+from app.models import IssueFilterSelection
+from app.service import OperationsMetricsService
+
+service = OperationsMetricsService()  # uses fallback data
+selection = IssueFilterSelection(calendar_week_id=1, production_line_ids=[1, 3])
+summary = service.get_issue_summary(selection=selection, group_by_line=True)
+# [
+#   {"week_label": "2026-W03", "line_name": "Line 1", "issue_type_name": "material_shortage", "issue_count": 1},
+#   {"week_label": "2026-W03", "line_name": "Line 1", "issue_type_name": "tool_wear",          "issue_count": 1},
+#   {"week_label": "2026-W03", "line_name": "Line 4", "issue_type_name": "sensor_fault",       "issue_count": 1},
+# ]
+```
+
+<Tip>
+  Pass `group_by_line=False` when you want a single chart per issue type across all selected lines, and `group_by_line=True` when you need a per-line breakdown.
+</Tip>
+
+---
+
+### `get_affected_lots`
+
+```python
+get_affected_lots(selection: IssueFilterSelection) -> list[dict[str, Any]]
+```
+
+Returns the lots that recorded at least one issue in the selected week and lines. Results are sorted by `issue_count` descending, then by `lot_code` ascending. Returns an empty list immediately when `selection.production_line_ids` is empty.
+
+<ParamField path="selection" type="IssueFilterSelection" required>
+  A frozen dataclass carrying the selected `calendar_week_id` and `production_line_ids`. See [`IssueFilterSelection`](/api/models).
+</ParamField>
+
+**Returns** `list[dict[str, Any]]` — each dict contains:
+
+<ResponseField name="week_label" type="str">
+  ISO week label for the selected week.
+</ResponseField>
+
+<ResponseField name="line_name" type="str">
+  Name of the production line the lot ran on.
+</ResponseField>
+
+<ResponseField name="lot_code" type="str">
+  Identifier for the affected lot, e.g. `"LOT-1001"`.
+</ResponseField>
+
+<ResponseField name="issue_count" type="int">
+  Total number of issue occurrences recorded against this lot.
+</ResponseField>
+
+<ResponseField name="issue_types" type="str">
+  Comma-separated, alphabetically sorted list of distinct issue type names recorded against this lot, e.g. `"changeover_delay, tool_wear"`.
+</ResponseField>
+
+---
+
+### `export_issue_summary_csv`
+
+```python
+export_issue_summary_csv(selection: IssueFilterSelection, group_by_line: bool) -> bytes
+```
+
+Calls `get_issue_summary()` internally and serializes the result to UTF-8 encoded CSV bytes. The output always includes a header row. The `line_name` column is only present when `group_by_line=True`.
+
+<ParamField path="selection" type="IssueFilterSelection" required>
+  Filter scope for the export. See [`IssueFilterSelection`](/api/models).
+</ParamField>
+
+<ParamField path="group_by_line" type="bool" required>
+  Controls whether `line_name` is included as a column in the CSV output.
+</ParamField>
+
+**Returns** `bytes` — UTF-8 encoded CSV content.
+
+**Columns** (in order):
+
+| Column | Present when |
+|---|---|
+| `week_label` | Always |
+| `line_name` | `group_by_line=True` only |
+| `issue_type_name` | Always |
+| `issue_count` | Always |
+
+**Example**
+
+```python
+from app.models import IssueFilterSelection
+from app.service import OperationsMetricsService
+
+service = OperationsMetricsService()
+selection = IssueFilterSelection(calendar_week_id=1, production_line_ids=[1, 3])
+
+csv_bytes = service.export_issue_summary_csv(selection=selection, group_by_line=False)
+with open("issue_summary.csv", "wb") as f:
+    f.write(csv_bytes)
+```
+
+---
+
+### `export_affected_lots_csv`
+
+```python
+export_affected_lots_csv(selection: IssueFilterSelection) -> bytes
+```
+
+Calls `get_affected_lots()` internally and serializes the result to UTF-8 encoded CSV bytes. The output always includes a header row.
+
+<ParamField path="selection" type="IssueFilterSelection" required>
+  Filter scope for the export. See [`IssueFilterSelection`](/api/models).
+</ParamField>
+
+**Returns** `bytes` — UTF-8 encoded CSV content.
+
+**Columns** (in order): `week_label`, `line_name`, `lot_code`, `issue_count`, `issue_types`.
+
+---
+
+### `normalize_line_ids`
+
+```python
+normalize_line_ids(line_ids: list[int]) -> list[int]
+```
+
+Returns a deduplicated, sorted copy of `line_ids`. This method is called internally by `get_issue_summary()`, `get_affected_lots()`, and both CSV export methods before any query is executed, ensuring deterministic behavior regardless of the order or duplication in the caller's input.
+
+<ParamField path="line_ids" type="list[int]" required>
+  A list of production line IDs, possibly containing duplicates and in any order.
+</ParamField>
+
+**Returns** `list[int]` — sorted list with duplicates removed.
+
+**Example**
+
+```python
+service = OperationsMetricsService()
+service.normalize_line_ids([4, 1, 4, 2, 1])
+# [1, 2, 4]
+```

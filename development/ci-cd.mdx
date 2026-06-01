@@ -1,0 +1,165 @@
+---
+title: "CI/CD pipeline for SteelWorks with GitHub Actions"
+sidebarTitle: "CI/CD"
+description: "How the SteelWorks GitHub Actions CI pipeline works — code quality checks with pre-commit and Docker image build validation on every pull request and push to main."
+---
+
+SteelWorks uses GitHub Actions for automated code quality enforcement and Docker build validation. Every pull request and push to `main` runs through a two-job pipeline that gates the Docker build behind a full pre-commit quality check, ensuring that linting, type errors, and failing unit tests are caught before a broken image is ever produced.
+
+## Workflow overview
+
+The CI workflow is defined in `.github/workflows/ci.yml` and contains two jobs:
+
+| Job | Runs on | Depends on | Purpose |
+|---|---|---|---|
+| `quality` | `ubuntu-latest` | — | Runs all pre-commit hooks (Ruff lint, Ruff format, mypy, unit tests, license check) on Python 3.13 |
+| `docker-build` | `ubuntu-latest` | `quality` | Builds the Docker image with Docker Buildx; only executes after `quality` passes |
+
+### Triggers
+
+The workflow fires on:
+
+- **Pull requests to `main`** — event types `opened`, `synchronize`, and `reopened`
+- **Pushes to `main`**
+
+### Permissions
+
+The workflow declares minimal permissions:
+
+```yaml
+permissions:
+  contents: read
+```
+
+No write access to the repository, packages, or any other resource is granted.
+
+## CI workflow YAML
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: docker build -t steelworks .
+```
+
+## Pre-commit hooks
+
+The `.pre-commit-config.yaml` file defines four hooks that run in the `quality` job and are also designed to run locally before every commit:
+
+| Hook | Source | What it does |
+|---|---|---|
+| `ruff` | `astral-sh/ruff-pre-commit` v0.15.2 | Lints `app/`, `tests/`, and `scripts/` with auto-fix |
+| `ruff-format` | `astral-sh/ruff-pre-commit` v0.15.2 | Formats `app/`, `tests/`, and `scripts/` |
+| `mypy` | `pre-commit/mirrors-mypy` v1.19.1 | Type-checks `app/` and `tests/` (filenames not passed individually; runs project-wide) |
+| `unit-tests` | local | Runs `python -m pytest -q tests/unit` — blocks commit if any unit test fails |
+| `license-check-gpl` | local | Runs `scripts/check_gpl_licenses.py` — blocks commit if any runtime dependency carries a GPL/AGPL/LGPL license |
+
+To run the hooks locally against every file in the repository:
+
+```bash
+python -m pip install -r requirements-dev.txt
+pre-commit run --all-files
+```
+
+The `requirements-dev.txt` file pins all the tools used in CI:
+
+```text
+pytest>=8.0.0,<9.0.0
+pytest-cov>=7.0.0,<8.0.0
+pytest-playwright>=0.7.0,<1.0.0
+ruff>=0.15.0,<0.16.0
+mypy>=1.19.0,<2.0.0
+pre-commit>=4.0.0,<5.0.0
+pip-licenses>=5.0.0,<6.0.0
+python-dotenv>=1.0.0,<2.0.0
+sqlalchemy>=2.0.0,<3.0.0
+pg8000>=1.31.0,<2.0.0
+psycopg[binary]>=3.3.0,<4.0.0
+streamlit>=1.55.0,<2.0.0
+playwright>=1.58.0,<2.0.0
+```
+
+<Tip>
+  Run `pre-commit run --all-files` locally before pushing. This runs the exact same Ruff, mypy, unit-test, and license-check steps that the CI `quality` job runs, so you catch lint and type errors before they fail the pipeline.
+</Tip>
+
+## Deploy workflow
+
+A separate workflow, `.github/workflows/deploy.yml`, handles deployment to Render. It is **not** triggered by a push directly — instead it listens for a completed `CI` workflow run and fires a Render deploy hook only when:
+
+- The trigger is `workflow_dispatch` (manual), **or**
+- The completed CI run was a `push` event to `main` that ended with `success`
+
+```yaml
+name: Deploy to Render
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  render-deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl --fail --show-error --silent -X POST "$RENDER_DEPLOY_HOOK_URL"
+```
+
+The `RENDER_DEPLOY_HOOK_URL` secret must be configured in the repository's GitHub Actions secrets. This means a deploy to production only happens automatically when a CI-passing push lands on `main`, keeping the deployment gate tied directly to code quality.

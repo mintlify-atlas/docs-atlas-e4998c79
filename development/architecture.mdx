@@ -1,0 +1,125 @@
+---
+title: "SteelWorks architecture — layers and design decisions"
+sidebarTitle: "Architecture"
+description: "How SteelWorks is structured: the three-layer Python architecture, key design decisions around the service layer, repository pattern, and in-memory fallback data."
+---
+
+SteelWorks follows a layered architecture that keeps UI rendering, business logic, and data access cleanly separated. Each layer has a single responsibility and communicates with the layer below it through a well-defined interface, making the codebase straightforward to test, extend, and reason about.
+
+## Layer diagram
+
+<Steps>
+  <Step title="Streamlit UI — streamlit_app.py / app/streamlit_app.py">
+    The entry point renders Streamlit widgets, reads user selections from the sidebar (week filter, line filter, group-by toggle), assembles an `IssueFilterSelection` dataclass, and delegates all data retrieval and CSV export to the service layer. The UI layer contains no business logic and no SQL.
+  </Step>
+  <Step title="Service layer — app/service.py">
+    `OperationsMetricsService` is the application boundary. It owns every business rule:
+
+    - **Line normalization** — `normalize_line_ids` deduplicates and sorts an incoming list of line IDs before any query or filter is applied
+    - **Fallback data** — when no repository is injected, the service returns built-in in-memory data so the UI works offline and unit tests need no database
+    - **CSV encoding** — `export_issue_summary_csv` and `export_affected_lots_csv` build and encode the byte payloads consumed by Streamlit's download buttons
+    - **Logging** — structured `INFO`-level log lines record the selected scope on every summary or lot query
+  </Step>
+  <Step title="Repository layer — app/repository.py">
+    `OperationsRepository` executes parameterized SQL against PostgreSQL via SQLAlchemy (using the `pg8000` driver). It is constructed with a database URL and injected into the service at startup. The repository has no awareness of business rules — it maps query results to plain Python `dict` objects and returns them.
+  </Step>
+  <Step title="Database — PostgreSQL">
+    The database schema (`db/schema.sql`) defines 11 tables and an `issue_occurrences` view. The `db/seed.sql` script populates test data used by the integration and E2E test suites. In production the database is hosted on Render and its URL is supplied via the `DATABASE_URL` environment variable.
+  </Step>
+</Steps>
+
+## Repository pattern
+
+The service layer depends on the `OperationsDataSource` Protocol defined in `app/service.py`, not on the concrete `OperationsRepository` class:
+
+```python
+class OperationsDataSource(Protocol):
+    """Repository contract used by the service layer."""
+
+    def get_available_weeks(self) -> list[dict[str, Any]]: ...
+
+    def get_available_lines(self) -> list[dict[str, Any]]: ...
+
+    def get_issue_summary(
+        self, week_id: int, line_ids: list[int], group_by_line: bool
+    ) -> list[dict[str, Any]]: ...
+
+    def get_affected_lots(
+        self, week_id: int, line_ids: list[int]
+    ) -> list[dict[str, Any]]: ...
+```
+
+Python's structural subtyping means any object that implements these four methods satisfies the protocol — no inheritance required. In production the real `OperationsRepository` is injected; in tests, simple in-memory objects or the real repository against the test database are injected interchangeably.
+
+## In-memory fallback
+
+When `OperationsMetricsService` is initialized without a repository argument (`repository=None`), it falls back to built-in data embedded directly in the service:
+
+```python
+def __init__(self, repository: OperationsDataSource | None = None) -> None:
+    self._repository = repository
+
+    # Fallback data keeps unit tests independent of a running database.
+    self._weeks: list[dict[str, int | str]] = [
+        {"calendar_week_id": 1, "week_label": "2026-W03"},
+        {"calendar_week_id": 2, "week_label": "2026-W04"},
+    ]
+    self._lines: list[dict[str, int | str | bool]] = [
+        {"production_line_id": 1, "line_name": "Line 1", "is_active": True},
+        {"production_line_id": 2, "line_name": "Line 2", "is_active": False},
+        {"production_line_id": 3, "line_name": "Line 4", "is_active": True},
+    ]
+    self._issue_occurrences: list[dict[str, int | str]] = [
+        # 6 seeded occurrences across weeks 1 and 2
+        ...
+    ]
+```
+
+The fallback dataset contains **2 calendar weeks**, **3 production lines** (one inactive), and **6 issue occurrences**. This makes two workflows possible without any infrastructure:
+
+- **Unit tests** — all nine unit tests run entirely against this data, with no Docker or database required
+- **Offline UI exploration** — the Streamlit app starts and renders meaningful data even when no `DATABASE_URL` is configured
+
+## `@st.cache_resource`
+
+The Streamlit app uses `@st.cache_resource` to cache the `OperationsMetricsService` instance keyed by the database URL. This means the SQLAlchemy connection pool is created once per Streamlit server process and reused across all user interactions and rerenders — avoiding the overhead of opening a new connection on every widget interaction.
+
+## ADR summary
+
+The `docs/architecture_decision_records.md` file records five architecture decisions made during the project. These ADRs were originally authored for the **Campus Hub** project and carried over to SteelWorks as guiding principles.
+
+<Note>
+  The ADR document references "Campus Hub" by name throughout — these decisions were adopted as guiding principles for SteelWorks. Where the ADRs describe feature-based vertical slices (ADR-003), SteelWorks applies a simplified version: all application code lives in a single `app/` package rather than per-feature subdirectories.
+</Note>
+
+| ADR | Title | Decision | SteelWorks application |
+|---|---|---|---|
+| ADR-001 | Client–Server | Browser UI talks to a single backend that owns all validation and persistence | Streamlit (client) calls the service layer (server-side Python); no business logic in UI widgets |
+| ADR-002 | Modular monolith | One deployable with internal modular boundaries | Single Docker image deployed to Render; `app/` package enforces layer boundaries internally |
+| ADR-003 | Feature-based vertical slices with layered subfolders | Top-level feature modules, each with `controller/`, `service/`, `repository/` subfolders | SteelWorks has one feature; all code lives in `app/` with file-level layer separation (`service.py`, `repository.py`, `streamlit_app.py`) |
+| ADR-004 | Single relational database | PostgreSQL as the sole system of record | One PostgreSQL instance with 11 tables and the `issue_occurrences` view |
+| ADR-005 | Synchronous request/response | Synchronous HTTP for all user-facing flows | Streamlit's synchronous rerender model; no background queues or async tasks for user interactions |
+
+## Type safety
+
+mypy runs in the pre-commit hook and in CI against both `app/` and `tests/`. The configuration in `pyproject.toml` enables strict checking:
+
+```toml
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "."
+files = ["app", "tests"]
+pretty = true
+show_error_codes = true
+warn_unused_ignores = true
+no_implicit_optional = true
+ignore_missing_imports = true
+explicit_package_bases = true
+disable_error_code = ["import-untyped"]
+```
+
+Key type-safety points:
+
+- **`OperationsDataSource`** is declared as a `Protocol`, giving the service layer a fully typed contract without requiring concrete inheritance
+- **All service methods** carry complete type annotations — parameter types, return types, and local variable annotations are present throughout `app/service.py`
+- **`IssueFilterSelection`** is a typed dataclass (defined in `app/models.py`) used as the selection scope parameter passed from the UI into every service method

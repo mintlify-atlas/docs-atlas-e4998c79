@@ -1,0 +1,145 @@
+---
+title: "issue_occurrences view — authoritative issue reporting"
+sidebarTitle: "issue_occurrences View"
+description: "The issue_occurrences PostgreSQL view joins production_issues, production_runs, and issue_types to provide the single authoritative source for all issue reporting queries."
+---
+
+The `issue_occurrences` view is the **single authoritative source** for every issue-related metric in the SteelWorks dashboard. It denormalizes the three-way join between `production_issues`, `production_runs`, and `issue_types` so that reporting queries never need to re-state that join. All issue count summaries, affected-lot lists, and CSV exports should be built on top of this view. Never query `production_issues` directly for metrics — the view exists precisely to prevent inconsistent join logic spreading across multiple queries.
+
+## View DDL
+
+```sql
+CREATE VIEW issue_occurrences AS
+SELECT
+  pi.production_issue_id,
+  pi.issue_type_id,
+  it.issue_type_name,
+  pr.production_run_id,
+  pr.run_date,
+  pr.calendar_week_id,
+  pr.production_line_id,
+  pr.lot_id,
+  pi.supervisor_notes
+FROM production_issues pi
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id;
+```
+
+## Columns
+
+<ResponseField name="production_issue_id" type="BIGINT">
+  Primary key of the underlying `production_issues` row. Use this for row-level identification when drilling into a specific issue record.
+</ResponseField>
+
+<ResponseField name="issue_type_id" type="BIGINT">
+  Foreign key value from `production_issues.issue_type_id`. Useful for filtering or grouping by type ID when joining to other tables that reference `issue_types`.
+</ResponseField>
+
+<ResponseField name="issue_type_name" type="TEXT">
+  Human-readable issue classification (e.g., `tool_wear`, `material_shortage`), sourced from `issue_types.issue_type_name`. Use this column for display labels and `GROUP BY` in summary queries.
+</ResponseField>
+
+<ResponseField name="production_run_id" type="BIGINT">
+  Primary key of the related `production_runs` row. Use this to join back to `production_runs` when you need columns not exposed by the view (e.g., `units_actual`, `downtime_minutes`).
+</ResponseField>
+
+<ResponseField name="run_date" type="DATE">
+  Calendar date of the production run on which the issue was recorded, sourced from `production_runs.run_date`.
+</ResponseField>
+
+<ResponseField name="calendar_week_id" type="BIGINT">
+  ISO calendar week identifier of the production run, sourced from `production_runs.calendar_week_id`. The primary filter parameter for weekly issue reports — use this to scope queries to a selected week.
+</ResponseField>
+
+<ResponseField name="production_line_id" type="BIGINT">
+  Production line on which the issue occurred, sourced from `production_runs.production_line_id`. The secondary filter parameter for per-line issue breakdowns.
+</ResponseField>
+
+<ResponseField name="lot_id" type="BIGINT">
+  Lot being processed when the issue was recorded, sourced from `production_runs.lot_id`. Join to the `lots` table to surface the `lot_code` for display.
+</ResponseField>
+
+<ResponseField name="supervisor_notes" type="TEXT">
+  Optional free-text notes from the shift supervisor, sourced from `production_issues.supervisor_notes`. May be `NULL` when no notes were entered.
+</ResponseField>
+
+---
+
+## Using the view
+
+### Issue totals for a selected week and selected lines (Query 12)
+
+This query powers the issue summary panel. Substitute `:week_id` and `:line_ids` with the dashboard's active filter values. In `psql`, set variables with `\set week_id 1` and `\set line_ids '{1,2}'`.
+
+```sql
+-- (AC4/AC5) Authoritative issue totals for a selected week + selected lines
+SELECT
+  cw.week_label,
+  pl.line_name,
+  io.issue_type_name,
+  COUNT(*) AS issue_count
+FROM issue_occurrences io
+JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+WHERE io.calendar_week_id = :week_id
+  AND io.production_line_id = ANY(:line_ids::bigint[])
+GROUP BY cw.week_label, pl.line_name, io.issue_type_name
+ORDER BY pl.line_name, issue_count DESC, io.issue_type_name;
+```
+
+### Affected lots for a selected week and selected lines (Query 13)
+
+Returns each lot that had at least one issue in the selected scope, along with a count and a comma-separated list of distinct issue type names. Use this for the affected-lots drill-down panel.
+
+```sql
+-- (AC6/AC7) Affected lots list for the selected week + selected lines
+SELECT
+  cw.week_label,
+  pl.line_name,
+  l.lot_code,
+  COUNT(*) AS issue_count,
+  STRING_AGG(DISTINCT io.issue_type_name, ', ' ORDER BY io.issue_type_name) AS issue_types
+FROM issue_occurrences io
+JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+JOIN lots l ON l.lot_id = io.lot_id
+WHERE io.calendar_week_id = :week_id
+  AND io.production_line_id = ANY(:line_ids::bigint[])
+GROUP BY cw.week_label, pl.line_name, l.lot_code
+ORDER BY issue_count DESC, l.lot_code;
+```
+
+---
+
+## Dashboard usage note
+
+<Note>
+  The dashboard's `OperationsRepository` does **not** query `issue_occurrences` directly at runtime — it performs equivalent joins inline in its SQL. The view is provided for ad-hoc reporting, `psql`-based investigation, and data export workflows. Any change to the three underlying tables (`production_issues`, `production_runs`, `issue_types`) is automatically reflected in the view without code changes.
+</Note>
+
+---
+
+## Exporting issue summaries
+
+<Tip>
+  Use `psql`'s `\copy` command with Query 15 from `sample_queries.sql` to export a flat issue summary CSV directly from the database — no application code required:
+
+  ```sql
+  \copy (
+    SELECT
+      cw.week_label,
+      pl.line_name,
+      io.issue_type_name,
+      COUNT(*) AS issue_count
+    FROM issue_occurrences io
+    JOIN calendar_weeks cw ON cw.calendar_week_id = io.calendar_week_id
+    JOIN production_lines pl ON pl.production_line_id = io.production_line_id
+    WHERE io.calendar_week_id = :week_id
+      AND io.production_line_id = ANY(:line_ids::bigint[])
+    GROUP BY cw.week_label, pl.line_name, io.issue_type_name
+    ORDER BY cw.week_label, pl.line_name, io.issue_type_name
+  ) TO 'issue_summary.csv' CSV HEADER
+  ```
+
+  Set `:week_id` and `:line_ids` with `\set` before running, or replace them with literal values. The output file is written to the working directory of the `psql` session.
+</Tip>

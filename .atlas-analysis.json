@@ -1,0 +1,110 @@
+{
+  "projectType": "saas",
+  "projectName": "SteelWorks",
+  "projectDescription": "A Streamlit dashboard for weekly manufacturing operations issue metrics — filter by production week and line, review issue summaries and affected lots, and export data to CSV.",
+  "theme": "aspen",
+  "primaryColor": "#2563EB",
+  "lightColor": "#DBEAFE",
+  "darkColor": "#1E3A5F",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Dashboard",
+            "pages": [
+              "dashboard/overview",
+              "dashboard/filters",
+              "dashboard/issue-summary",
+              "dashboard/affected-lots",
+              "dashboard/csv-exports"
+            ]
+          },
+          {
+            "group": "Data Model",
+            "pages": [
+              "data-model/schema",
+              "data-model/reference-tables",
+              "data-model/fact-tables",
+              "data-model/issue-occurrences-view"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/render",
+              "deployment/monitoring"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/testing",
+              "development/ci-cd",
+              "development/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Service Layer",
+            "pages": [
+              "api/operations-metrics-service",
+              "api/operations-data-source",
+              "api/models"
+            ]
+          },
+          {
+            "group": "Repository",
+            "pages": [
+              "api/operations-repository",
+              "api/sample-queries"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Production week and line filter controls",
+    "Issue summary table with optional group-by-line toggle",
+    "Affected lots reporting with issue type breakdown",
+    "One-click CSV export for both issue summary and affected lots",
+    "PostgreSQL-backed repository with SQLAlchemy (pg8000 driver)",
+    "In-memory fallback data for unit testing without a database",
+    "Sentry error monitoring integration",
+    "Docker-based deployment on Render with UptimeRobot health checks",
+    "Full test suite: unit, integration, and Playwright end-to-end",
+    "Pre-commit hooks with Ruff linting and mypy type checking"
+  ],
+  "publicApiSurface": [
+    "OperationsMetricsService.get_available_weeks()",
+    "OperationsMetricsService.get_available_lines()",
+    "OperationsMetricsService.get_issue_summary(selection, group_by_line)",
+    "OperationsMetricsService.get_affected_lots(selection)",
+    "OperationsMetricsService.export_issue_summary_csv(selection, group_by_line)",
+    "OperationsMetricsService.export_affected_lots_csv(selection)",
+    "OperationsMetricsService.normalize_line_ids(line_ids)",
+    "OperationsRepository.from_database_url(database_url)",
+    "OperationsRepository.get_available_weeks()",
+    "OperationsRepository.get_available_lines()",
+    "OperationsRepository.get_issue_summary(week_id, line_ids, group_by_line)",
+    "OperationsRepository.get_affected_lots(week_id, line_ids)",
+    "IssueFilterSelection(calendar_week_id, production_line_ids)",
+    "OperationsDataSource (Protocol)",
+    "issue_occurrences (PostgreSQL view)"
+  ]
+}

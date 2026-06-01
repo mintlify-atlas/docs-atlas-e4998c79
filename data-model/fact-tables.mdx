@@ -1,0 +1,232 @@
+---
+title: "Fact tables — production runs, issues, and shipments"
+sidebarTitle: "Fact Tables"
+description: "Documentation for SteelWorks transaction tables: production_runs captures daily output, production_issues records line issues per run, and shipments tracks order fulfillment."
+---
+
+The three fact tables accumulate transactional events over time and are the primary source of all dashboard metrics. `production_runs` captures planned vs. actual output and downtime for every shift on every line. `production_issues` attaches at most one classified issue to a run. `shipments` records the movement of lots against sales orders, including status tracking for partial, on-hold, and backordered shipments. All three tables reference the dimension tables via `ON DELETE RESTRICT` foreign keys, except `production_issues → production_runs` which cascades deletes.
+
+---
+
+## production_runs
+
+One row per discrete production run, uniquely identified by the combination of date, shift, line, and lot. This is the central fact table — both `production_issues` and many reporting queries pivot off it.
+
+<ResponseField name="production_run_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="run_date" type="DATE" required>
+  Calendar date on which the run took place.
+</ResponseField>
+
+<ResponseField name="calendar_week_id" type="BIGINT" required>
+  Foreign key to `calendar_weeks(calendar_week_id)`. Denormalized for efficient weekly aggregations without a date-to-week calculation at query time. Deletion of the parent week is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="shift_id" type="BIGINT" required>
+  Foreign key to `shifts(shift_id)`. Identifies which shift (day, night, or swing) the run occurred on. Deletion of the parent shift is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="production_line_id" type="BIGINT" required>
+  Foreign key to `production_lines(production_line_id)`. Deletion of the parent line is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="lot_id" type="BIGINT" required>
+  Foreign key to `lots(lot_id)`. Identifies which production lot was being processed during this run. Deletion of the parent lot is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="units_planned" type="INTEGER" required>
+  Number of units scheduled for this run. Must be ≥ 0 (`ck_production_runs_units_planned_nonneg`).
+</ResponseField>
+
+<ResponseField name="units_actual" type="INTEGER" required>
+  Number of units actually produced. Must be ≥ 0 (`ck_production_runs_units_actual_nonneg`). The difference `units_planned − units_actual` is the production variance used in dashboard charts.
+</ResponseField>
+
+<ResponseField name="downtime_minutes" type="INTEGER" required>
+  Total unplanned downtime recorded for the run, in minutes. Must be ≥ 0 (`ck_production_runs_downtime_nonneg`).
+</ResponseField>
+
+**Natural deduplication key:** The constraint `uq_production_runs_natural` — `UNIQUE (run_date, shift_id, production_line_id, lot_id)` — prevents duplicate log entries for the same run slot. Inserts that would violate this constraint can use `ON CONFLICT … DO NOTHING` for idempotent loading.
+
+**Indexes on `production_runs`:**
+
+| Index | Columns | Purpose |
+|---|---|---|
+| `idx_production_runs_run_date` | `run_date` | Date-range filtering |
+| `idx_production_runs_line_date` | `(production_line_id, run_date)` | Per-line date queries |
+| `idx_production_runs_lot_id` | `lot_id` | Lot drill-down |
+| `idx_production_runs_week_id` | `calendar_week_id` | Weekly aggregation |
+
+---
+
+## production_issues
+
+Records the primary issue for a production run. The one-to-one relationship with `production_runs` (enforced by a `UNIQUE` constraint on `production_run_id`) means a run either has one issue or none — there is no multi-issue record in this schema.
+
+<ResponseField name="production_issue_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="production_run_id" type="BIGINT" required>
+  Foreign key to `production_runs(production_run_id)`. When the parent run is deleted, its issue record is also deleted (`ON DELETE CASCADE`, constraint `fk_production_issues_production_run_id`). The `UNIQUE` constraint `uq_production_issues_production_run_id` enforces the one-issue-per-run rule.
+</ResponseField>
+
+<ResponseField name="issue_type_id" type="BIGINT" required>
+  Foreign key to `issue_types(issue_type_id)`. Classifies the issue. Deletion of the parent issue type is blocked while any issue record references it (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="supervisor_notes" type="TEXT">
+  Optional free-text notes entered by the shift supervisor describing the issue (e.g., `"Tool wear observed; replaced cutting insert."`).
+</ResponseField>
+
+<Note>
+  The `UNIQUE` constraint on `production_run_id` enforces that each production run has **at most one primary issue**. To query issue data in reports, use the `issue_occurrences` view rather than joining `production_issues` directly — the view provides pre-joined `issue_type_name`, `run_date`, `production_line_id`, and `lot_id` columns.
+</Note>
+
+---
+
+## shipments
+
+Records outbound shipment events for lots against sales orders. A single lot may appear in multiple shipment rows (e.g., split shipments, a partial followed by a completion, or an on-hold record). The `ship_status` column drives operational dashboards that track fulfillment health.
+
+<ResponseField name="shipment_id" type="BIGINT" required>
+  Synthetic primary key, generated automatically by the database.
+</ResponseField>
+
+<ResponseField name="ship_date" type="DATE" required>
+  Date the shipment was dispatched or the shipment event was recorded.
+</ResponseField>
+
+<ResponseField name="calendar_week_id" type="BIGINT" required>
+  Foreign key to `calendar_weeks(calendar_week_id)`. Denormalized for weekly shipping reports. Deletion of the parent week is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="lot_id" type="BIGINT" required>
+  Foreign key to `lots(lot_id)`. Identifies which lot is being shipped. Deletion of the parent lot is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="sales_order_id" type="BIGINT" required>
+  Foreign key to `sales_orders(sales_order_id)`. Links the shipment to a customer order. Deletion of the parent order is blocked (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="destination_state" type="CHAR(2)" required>
+  Two-letter US state code for the delivery destination. The constraint `ck_shipments_destination_state_len` enforces `char_length(destination_state) = 2`.
+</ResponseField>
+
+<ResponseField name="carrier_id" type="BIGINT">
+  Optional foreign key to `carriers(carrier_id)`. May be `NULL` when no carrier has been assigned (e.g., for on-hold or backordered records). Deletion of the parent carrier is blocked when referenced (`ON DELETE RESTRICT`).
+</ResponseField>
+
+<ResponseField name="bol_number" type="TEXT">
+  Optional Bill of Lading number issued by the carrier (e.g., `BOL-0001`).
+</ResponseField>
+
+<ResponseField name="tracking_or_pro" type="TEXT">
+  Optional carrier tracking number or PRO number (e.g., `1Z999`, `FDX123`).
+</ResponseField>
+
+<ResponseField name="qty_shipped" type="INTEGER" required>
+  Quantity of units included in this shipment record. Must be ≥ 0 (`ck_shipments_qty_nonneg`). The constraint `ck_shipments_backordered_qty` additionally requires `qty_shipped = 0` whenever `ship_status = 'backordered'`.
+</ResponseField>
+
+<ResponseField name="ship_status" type="TEXT" required>
+  Current status of the shipment. Must be one of the following values (enforced by `ck_shipments_ship_status`):
+
+  | Value | Meaning |
+  |---|---|
+  | `shipped` | Fully dispatched and delivered |
+  | `partial` | Partially shipped; additional shipment(s) expected |
+  | `on_hold` | Held pending resolution (see `hold_reason`) |
+  | `backordered` | No inventory available; `qty_shipped` must equal 0 |
+</ResponseField>
+
+<ResponseField name="hold_reason" type="TEXT">
+  Optional description of why the shipment is on hold (e.g., `Quality hold`, `Customer requested delay`). Typically populated when `ship_status = 'on_hold'`.
+</ResponseField>
+
+<ResponseField name="shipping_notes" type="TEXT">
+  Optional free-text notes about the shipment.
+</ResponseField>
+
+**Check constraints on `shipments`:**
+- `ck_shipments_qty_nonneg` — `qty_shipped >= 0`
+- `ck_shipments_destination_state_len` — `char_length(destination_state) = 2`
+- `ck_shipments_ship_status` — `ship_status IN ('shipped', 'partial', 'on_hold', 'backordered')`
+- `ck_shipments_backordered_qty` — `ship_status <> 'backordered' OR qty_shipped = 0`
+
+**Indexes on `shipments`:**
+
+| Index | Columns / Condition | Purpose |
+|---|---|---|
+| `idx_shipments_ship_date` | `ship_date` | Date-range filtering |
+| `idx_shipments_status` | `ship_status` | Filter by fulfillment status |
+| `idx_shipments_lot_id` | `lot_id` | Lot-to-shipment join path |
+| `idx_shipments_sales_order_id` | `sales_order_id` | Order drill-down |
+| `idx_shipments_destination_state_date` | `(destination_state, ship_date)` | State + date composite reporting |
+| `idx_shipments_on_hold` | `ship_date` WHERE `ship_status = 'on_hold'` | Partial index for "on hold" dashboard panel |
+
+---
+
+## Sample queries
+
+The following queries are taken directly from `db/sample_queries.sql` and demonstrate common fact-table reporting patterns.
+
+### Weekly production summary by line
+
+Aggregates planned units, actual units, and total downtime per ISO week per line. This powers the primary production summary panel in the dashboard.
+
+```sql
+-- 1) Weekly production summary by line (planned vs actual + downtime)
+SELECT
+  cw.week_label,
+  pl.line_name,
+  SUM(pr.units_planned) AS units_planned,
+  SUM(pr.units_actual) AS units_actual,
+  SUM(pr.downtime_minutes) AS downtime_minutes
+FROM production_runs pr
+JOIN production_lines pl ON pl.production_line_id = pr.production_line_id
+LEFT JOIN calendar_weeks cw ON cw.calendar_week_id = pr.calendar_week_id
+GROUP BY cw.week_label, pl.line_name
+ORDER BY cw.week_label, pl.line_name;
+```
+
+### Top issue types in the last 30 days
+
+Uses a CTE to anchor the window to the most recent `run_date` in the table (rather than `NOW()`) so results are stable against the seed dataset.
+
+```sql
+-- 2) Top issue types in the last 30 days (relative to max run_date in table)
+WITH bounds AS (
+  SELECT (MAX(run_date) - INTERVAL '30 days')::date AS start_date
+  FROM production_runs
+)
+SELECT
+  it.issue_type_name,
+  COUNT(*) AS issue_count
+FROM production_issues pi
+JOIN issue_types it ON it.issue_type_id = pi.issue_type_id
+JOIN production_runs pr ON pr.production_run_id = pi.production_run_id
+JOIN bounds b ON pr.run_date >= b.start_date
+GROUP BY it.issue_type_name
+ORDER BY issue_count DESC, it.issue_type_name;
+```
+
+### Average downtime by line and shift
+
+Calculates mean downtime per (line, shift) combination along with the number of runs sampled. Useful for identifying which shifts or lines carry the highest downtime burden.
+
+```sql
+-- 6) Average downtime by line + shift
+SELECT
+  pl.line_name,
+  sh.shift_name,
+  AVG(pr.downtime_minutes)::numeric(10,2) AS avg_downtime_minutes,
+  COUNT(*) AS run_count
+FROM production_runs pr
+JOIN production_lines pl ON pl.production_line_id = pr.production_line_id
+JOIN shifts sh ON sh.shift_id = pr.shift_id
+GROUP BY pl.line_name, sh.shift_name
+ORDER BY pl.line_name, sh.shift_name;
+```
