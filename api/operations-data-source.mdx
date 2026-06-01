@@ -1,10 +1,10 @@
 ---
 title: "OperationsDataSource Protocol — repository interface"
 sidebarTitle: "OperationsDataSource"
-description: "The OperationsDataSource Protocol defines the repository interface that OperationsMetricsService depends on, enabling custom data sources and test doubles."
+description: "The OperationsDataSource Protocol defines the repository interface OperationsMetricsService depends on, enabling custom data sources and test doubles."
 ---
 
-`OperationsDataSource` is a `typing.Protocol` that defines the contract between `OperationsMetricsService` and its data source. Any object that implements these four methods with compatible signatures can be passed as the `repository` argument to the service — no inheritance or explicit registration is required.
+`OperationsDataSource` is a `typing.Protocol` defined inline in `app.service` (`app/service.py`) that defines the contract between `OperationsMetricsService` and its data source. Any object that implements these four methods with compatible signatures can be passed as the `repository` argument to the service — no inheritance or explicit registration is required.
 
 ## Protocol definition
 

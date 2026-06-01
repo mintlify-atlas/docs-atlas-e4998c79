@@ -1,7 +1,7 @@
 ---
 title: "OperationsMetricsService — application service layer"
 sidebarTitle: "OperationsMetricsService"
-description: "API reference for OperationsMetricsService: the application service boundary for SteelWorks that handles issue summaries, affected lots, CSV exports, and in-memory fallback data."
+description: "API reference for OperationsMetricsService: the SteelWorks service for issue summaries, affected lots, CSV exports, and in-memory fallback data."
 ---
 
 `OperationsMetricsService` is the central application service that SteelWorks' Streamlit UI calls. It accepts an optional `OperationsDataSource` repository; when none is provided, it uses built-in fallback data so the dashboard can run and be tested without a live database connection.
@@ -260,7 +260,7 @@ Calls `get_affected_lots()` internally and serializes the result to UTF-8 encode
 normalize_line_ids(line_ids: list[int]) -> list[int]
 ```
 
-Returns a deduplicated, sorted copy of `line_ids`. This method is called internally by `get_issue_summary()`, `get_affected_lots()`, and both CSV export methods before any query is executed, ensuring deterministic behavior regardless of the order or duplication in the caller's input.
+Returns a deduplicated, sorted copy of `line_ids`. This method is called internally by `get_issue_summary()` and `get_affected_lots()` before any query is executed, ensuring deterministic behavior regardless of the order or duplication in the caller's input. The CSV export methods (`export_issue_summary_csv`, `export_affected_lots_csv`) benefit from this normalization indirectly because they delegate to those two methods.
 
 <ParamField path="line_ids" type="list[int]" required>
   A list of production line IDs, possibly containing duplicates and in any order.

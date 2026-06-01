@@ -1,7 +1,7 @@
 ---
-title: "Sample SQL queries for SteelWorks reporting"
+title: "SteelWorks sample SQL queries — production reporting"
 sidebarTitle: "Sample Queries"
-description: "Ready-to-run SQL queries from db/sample_queries.sql for production summaries, issue rankings, shipment analysis, and AC-driven metrics using the issue_occurrences view."
+description: "Fifteen ready-to-run SQL queries for SteelWorks production, issue, shipment, and AC-driven metrics reporting against the PostgreSQL database."
 ---
 
 `db/sample_queries.sql` contains 15 production-ready queries for ad-hoc reporting against the SteelWorks PostgreSQL database. All queries assume `db/schema.sql` and `db/seed.sql` have been applied. They can be run directly in `psql`, piped through any SQL client, or adapted into application code. Queries 12–15 are parameterized with `:week_id` and `:line_ids` bind variables that map directly to the filters exposed in the SteelWorks Streamlit dashboard.

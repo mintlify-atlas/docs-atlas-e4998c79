@@ -1,7 +1,7 @@
 ---
 title: "OperationsRepository — PostgreSQL data access layer"
 sidebarTitle: "OperationsRepository"
-description: "API reference for OperationsRepository: the SQLAlchemy-backed PostgreSQL repository that executes parameterized queries for SteelWorks issue metrics and lot data."
+description: "API reference for OperationsRepository: the SQLAlchemy PostgreSQL repository executing parameterized queries for SteelWorks issue metrics and lot data."
 ---
 
 `OperationsRepository` is the read-side PostgreSQL repository for SteelWorks. It implements the `OperationsDataSource` Protocol and executes all SQL via SQLAlchemy Core with parameterized queries — never string interpolation. Every public method returns plain `list[dict]` values so the Streamlit UI layer has no SQLAlchemy dependency.

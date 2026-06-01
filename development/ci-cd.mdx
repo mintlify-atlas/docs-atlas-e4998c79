@@ -1,7 +1,7 @@
 ---
-title: "CI/CD pipeline for SteelWorks with GitHub Actions"
+title: "SteelWorks GitHub Actions CI/CD pipeline reference"
 sidebarTitle: "CI/CD"
-description: "How the SteelWorks GitHub Actions CI pipeline works — code quality checks with pre-commit and Docker image build validation on every pull request and push to main."
+description: "SteelWorks GitHub Actions CI: a two-job pipeline gating Docker builds behind pre-commit quality checks on every push and pull request to main."
 ---
 
 SteelWorks uses GitHub Actions for automated code quality enforcement and Docker build validation. Every pull request and push to `main` runs through a two-job pipeline that gates the Docker build behind a full pre-commit quality check, ensuring that linting, type errors, and failing unit tests are caught before a broken image is ever produced.

@@ -1,7 +1,7 @@
 ---
 title: "issue_occurrences view — authoritative issue reporting"
 sidebarTitle: "issue_occurrences View"
-description: "The issue_occurrences PostgreSQL view joins production_issues, production_runs, and issue_types to provide the single authoritative source for all issue reporting queries."
+description: "The issue_occurrences view pre-joins production_issues, production_runs, and issue_types as the single authoritative source for SteelWorks issue metrics."
 ---
 
 The `issue_occurrences` view is the **single authoritative source** for every issue-related metric in the SteelWorks dashboard. It denormalizes the three-way join between `production_issues`, `production_runs`, and `issue_types` so that reporting queries never need to re-state that join. All issue count summaries, affected-lot lists, and CSV exports should be built on top of this view. Never query `production_issues` directly for metrics — the view exists precisely to prevent inconsistent join logic spreading across multiple queries.
@@ -72,7 +72,7 @@ JOIN issue_types it ON it.issue_type_id = pi.issue_type_id;
 This query powers the issue summary panel. Substitute `:week_id` and `:line_ids` with the dashboard's active filter values. In `psql`, set variables with `\set week_id 1` and `\set line_ids '{1,2}'`.
 
 ```sql
--- (AC4/AC5) Authoritative issue totals for a selected week + selected lines
+-- 12) (AC4/AC5) Authoritative issue totals for a selected week + selected lines
 SELECT
   cw.week_label,
   pl.line_name,
@@ -92,7 +92,7 @@ ORDER BY pl.line_name, issue_count DESC, io.issue_type_name;
 Returns each lot that had at least one issue in the selected scope, along with a count and a comma-separated list of distinct issue type names. Use this for the affected-lots drill-down panel.
 
 ```sql
--- (AC6/AC7) Affected lots list for the selected week + selected lines
+-- 13) (AC6/AC7) Affected lots list for the selected week + selected lines
 SELECT
   cw.week_label,
   pl.line_name,

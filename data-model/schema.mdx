@@ -1,7 +1,7 @@
 ---
 title: "SteelWorks PostgreSQL schema — tables and relationships"
 sidebarTitle: "Schema"
-description: "Overview of the SteelWorks PostgreSQL schema: 11 tables, 1 reporting view, foreign key relationships, check constraints, and the indexes that power dashboard queries."
+description: "Overview of the SteelWorks PostgreSQL schema: 12 tables, 1 reporting view, foreign-key relationships, check constraints, and dashboard query indexes."
 ---
 
 The SteelWorks PostgreSQL schema models a manufacturing **production and shipping log** that drives the operations dashboard. It is divided into nine dimension (reference) tables that hold stable lookup data and three fact (transaction) tables that accumulate run-by-run production and shipping events. A single reporting view — `issue_occurrences` — joins the issue, run, and type tables into the authoritative source for all issue metrics.
@@ -21,7 +21,7 @@ psql $DATABASE_URL -f db/seed.sql
 
 ## Tables overview
 
-The schema contains **11 tables** split across two categories:
+The schema contains **12 tables** split across two categories:
 
 | Table | Category | Purpose |
 |---|---|---|

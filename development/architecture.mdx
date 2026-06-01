@@ -1,7 +1,7 @@
 ---
 title: "SteelWorks architecture — layers and design decisions"
 sidebarTitle: "Architecture"
-description: "How SteelWorks is structured: the three-layer Python architecture, key design decisions around the service layer, repository pattern, and in-memory fallback data."
+description: "How SteelWorks is structured: three-layer Python architecture with design decisions for the service layer, repository pattern, and in-memory fallback."
 ---
 
 SteelWorks follows a layered architecture that keeps UI rendering, business logic, and data access cleanly separated. Each layer has a single responsibility and communicates with the layer below it through a well-defined interface, making the codebase straightforward to test, extend, and reason about.

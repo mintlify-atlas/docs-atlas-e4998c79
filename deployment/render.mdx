@@ -76,14 +76,6 @@ After the service is live, run through the following steps to confirm everything
   <Step title="Verify the app is accessible">
     Open `https://<your-service>.onrender.com/` and confirm the Operations Issue Metrics dashboard loads without errors.
   </Step>
-  <Step title="Initialize the database">
-    Apply the schema and seed data against your production database. From a local terminal with `DATABASE_URL` set to your Render connection string:
-
-    ```bash
-    psql "$DATABASE_URL" -f db/schema.sql
-    psql "$DATABASE_URL" -f db/seed.sql
-    ```
-  </Step>
   <Step title="Test the health endpoint">
     Confirm the Streamlit server is responding to health checks:
 

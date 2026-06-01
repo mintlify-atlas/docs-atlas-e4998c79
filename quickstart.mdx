@@ -95,9 +95,9 @@ By the end of this guide you will have a fully functional SteelWorks dashboard r
 </Steps>
 
 <Tip>
-  **No database? No problem.** If `DATABASE_URL` is not set in your environment, `OperationsMetricsService` falls back to built-in in-memory data — **2 weeks** (2026-W03 and 2026-W04), **3 production lines** (Line 1, Line 2, Line 4), and **6 issue occurrences** — so you can explore every part of the dashboard UI without provisioning PostgreSQL at all. Simply skip Steps 3 and 4 and run the app; it will start and serve the fallback dataset automatically.
+  **No database? No problem.** If `DATABASE_URL` is not set in your environment, `OperationsMetricsService` falls back to built-in in-memory data — **2 weeks** (2026-W03 and 2026-W04), **2 active production lines** (Line 1 and Line 4), and **6 issue occurrences** — so you can explore every part of the dashboard UI without provisioning PostgreSQL at all. Simply skip Steps 3 and 4 and run the app; it will start and serve the fallback dataset automatically.
 </Tip>
 
 <Note>
-  For a full reference of all supported environment variables — including `SENTRY_DSN`, `TEST_DATABASE_URL`, `PORT`, and `APP_LOG_LEVEL` — see the [Configuration](/configuration) page.
+  For a full reference of all supported environment variables — including `SENTRY_DSN`, `TEST_DATABASE_URL`, and `APP_LOG_LEVEL` — see the [Configuration](/configuration) page.
 </Note>

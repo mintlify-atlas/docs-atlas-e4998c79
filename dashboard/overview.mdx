@@ -1,7 +1,7 @@
 ---
-title: "Operations Issue Metrics Dashboard Overview"
+title: "SteelWorks Operations Issue Metrics Dashboard Guide"
 sidebarTitle: "Overview"
-description: "A guided tour of the SteelWorks dashboard — its layout, filter controls, data tables, and export buttons — and how each section maps to underlying service calls."
+description: "Tour the SteelWorks dashboard layout — filter controls, data tables, and export buttons — and see how each section maps to underlying service calls."
 ---
 
 SteelWorks is a single-page Streamlit dashboard that surfaces weekly manufacturing operations issue metrics stored in PostgreSQL. The page is laid out in a top-to-bottom flow: a title and caption at the top, followed by three filter controls (week selector, production-lines multiselect, and a group-by-line checkbox), then two data tables (**Issue Summary** and **Affected Lots**), each paired with a CSV download button. All data is scoped to the week and lines selected — changing a filter immediately re-runs every query and re-renders both tables.
@@ -25,13 +25,16 @@ Every render cycle follows these steps in order:
     `_resolve_database_url()` calls `load_dotenv()` then reads `DATABASE_URL` from the environment. If the variable is empty the app renders an `st.error` and returns early.
   </Step>
   <Step title="Create and cache the service">
-    `_cached_service(database_url)` is decorated with `@st.cache_resource(show_spinner=False)`, so the `OperationsRepository` (SQLAlchemy engine) and `OperationsMetricsService` are constructed only once per process. Subsequent renders reuse the cached instance.
+    `_cached_service(database_url)` is decorated with `@st.cache_resource(show_spinner=False)`, so the `OperationsRepository` (SQLAlchemy engine) and `OperationsMetricsService` are constructed only once per process. Subsequent renders reuse the cached instance. The decorated function delegates to `_build_service()`:
 
     ```python
-    @st.cache_resource(show_spinner=False)
-    def _cached_service(database_url: str) -> OperationsMetricsService:
+    def _build_service(database_url: str) -> OperationsMetricsService:
         repository = OperationsRepository.from_database_url(database_url=database_url)
         return OperationsMetricsService(repository=repository)
+
+    @st.cache_resource(show_spinner=False)
+    def _cached_service(database_url: str) -> OperationsMetricsService:
+        return _build_service(database_url=database_url)
     ```
   </Step>
   <Step title="Load filter options">
@@ -67,17 +70,17 @@ Every render cycle follows these steps in order:
 
 ## Error handling
 
-The app has four guarded error paths, all of which halt rendering early:
+The app has five guarded error paths, all of which halt rendering early:
 
 | Condition | Streamlit call |
 |---|---|
-| `DATABASE_URL` is missing or empty | `st.error("DATABASE_URL is not set. Add it to '.env' before starting the app.")` |
+| `DATABASE_URL` is missing or empty | `st.error("DATABASE_URL is not set. Add it to \`.env\` before starting the app.")` |
 | Database connection or service init fails | `st.error(f"Unable to initialize database connection: {exc}")` |
 | Loading weeks or lines raises an exception | `st.error(f"Unable to load filter values: {exc}")` |
 | Weeks list is empty after successful load | `st.warning("No weeks found in the database.")` |
 | Lines list is empty after successful load | `st.warning("No active production lines found in the database.")` |
 
-Only the first two are `st.error` (hard failures); empty-data conditions use `st.warning` to signal a data-population issue rather than a system fault.
+The first three are `st.error` (hard failures); empty-data conditions use `st.warning` to signal a data-population issue rather than a system fault.
 
 ## Explore further
 

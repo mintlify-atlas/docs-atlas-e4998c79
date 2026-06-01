@@ -76,5 +76,5 @@ The `PORT` environment variable controls which port the Streamlit server listens
 </Note>
 
 <Tip>
-  Add a `.dockerignore` to exclude `.env`, `tests/`, and `poetry.lock` from the build context for faster builds and to avoid accidentally leaking local secrets into the image. The repository already ships a `.dockerignore` that excludes `.env`, `.env.test`, `.venv`, `__pycache__`, and cache directories.
+  The repository ships a `.dockerignore` that excludes `.git`, `.gitignore`, `__pycache__`, `*.pyc`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.env`, `.env.test`, and `.venv` from the build context. This keeps the image lean and prevents local secrets from being copied into it.
 </Tip>

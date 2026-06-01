@@ -1,7 +1,7 @@
 ---
 title: "Configure SteelWorks environment variables"
 sidebarTitle: "Configuration"
-description: "Reference for all SteelWorks environment variables — database connection, Sentry DSN, and test database URL — with examples for each environment."
+description: "Reference for all SteelWorks environment variables — database connection, Sentry DSN, test database URL, and log level — with examples for each environment."
 ---
 
 SteelWorks reads its runtime configuration from environment variables, loading them automatically from a `.env` file at startup via `python-dotenv`. No application code needs to change between environments — you simply swap the `.env` file or set variables directly in your hosting platform. The same mechanism applies to tests, which read from a separate `.env.test` file so test credentials never bleed into the running application.
@@ -57,16 +57,6 @@ SteelWorks uses two distinct environment files to keep application and test conf
   When the URL resolves to `127.0.0.1:5433/testdb`, the test suite automatically starts a local Docker Postgres container (`postgres:18`) at that address if one is not already running, then resets the schema and seeds test data before executing tests. This means you do not need to manage a test database manually.
 
   The alternative key `DATABASE_URL_TEST` is also accepted for compatibility.
-</ParamField>
-
-<ParamField body="PORT" type="integer">
-  The port the Streamlit server listens on inside the Docker container.
-
-  Defaults to `8501` (Streamlit's built-in default). When deploying to Render, this variable is set automatically by the platform and the Dockerfile reads it at container startup — you do not need to set it yourself.
-
-  ```env
-  PORT=8501
-  ```
 </ParamField>
 
 <ParamField body="APP_LOG_LEVEL" type="string">

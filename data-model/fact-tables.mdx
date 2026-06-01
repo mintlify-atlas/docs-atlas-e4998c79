@@ -1,7 +1,7 @@
 ---
 title: "Fact tables — production runs, issues, and shipments"
 sidebarTitle: "Fact Tables"
-description: "Documentation for SteelWorks transaction tables: production_runs captures daily output, production_issues records line issues per run, and shipments tracks order fulfillment."
+description: "SteelWorks fact tables: production_runs logs shift output and downtime, production_issues records one issue per run, and shipments tracks lot fulfillment."
 ---
 
 The three fact tables accumulate transactional events over time and are the primary source of all dashboard metrics. `production_runs` captures planned vs. actual output and downtime for every shift on every line. `production_issues` attaches at most one classified issue to a run. `shipments` records the movement of lots against sales orders, including status tracking for partial, on-hold, and backordered shipments. All three tables reference the dimension tables via `ON DELETE RESTRICT` foreign keys, except `production_issues → production_runs` which cascades deletes.
